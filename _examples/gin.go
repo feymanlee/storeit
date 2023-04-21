@@ -1,30 +1,3 @@
-# storeit
-
-## Tag List
-| Tag           | Value Type     | SQL Statment                        | DESC                   |
-|---------------|----------------|-------------------------------------|------------------------|
-| field:eq      | any            | feild = value                       |                        |
-| field:neq     | any            | feild <> value                      |                        |
-| field:gt      | any            | feild > value                       |                        |
-| field:gte     | any            | feild >= value                      |                        |
-| field:lt      | any            | feild < value                       |                        |
-| field:lte     | any            | feild <= value                      |                        |
-| field:like    | string         | feild LIKE "%value%"                |                        |
-| field:llike   | string         | feild LIKE "%value"                 |                        |
-| field:rlike   | string         | feild LIKE "value%"                 |                        |
-| field:in      | []any          | feild IN (value)                    |                        |
-| field:notin   | []any          | feild IN (value)                    |                        |
-| field:isnull  | any            | feild IS NULL                       |                        |
-| field:notnull | []any          | feild IS NOT NULL                   |                        |
-| field:between | []any (len==2) | feild BETWEEN value[0] AND value[1] |                        |
-| -:sort        | string         | ORDER BY a DESC, b, c DESC          | value is a-,b+,c-      |
-| -:page        | int            | OFFSET (value-1)*per_page           | Default per_page is 50 |
-| -:per_page    | int            | LIMIT value                         | Default  50            |
-| -:limit       | int            | LIMIT value                         |                        |
-| -:offset      | int            | OFFSET value                        |                        |
-
-## 在 gin 里面使用
-```go
 package main
 
 import (
@@ -67,6 +40,8 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
+	db.AutoMigrate(&User{})
+	mockUsers()
 }
 
 func main() {
@@ -97,7 +72,10 @@ func SearchUser(c *gin.Context) {
 	if err := c.ShouldBindQuery(&req); err != nil {
 		log.Println(err)
 	}
-	criteria, _ := storeit.ExtractCriteria(req)
+	criteria, err := storeit.ExtractCriteria(req)
+	if err != nil {
+		log.Println(err)
+	}
 	// source 是多个值，使用英文逗号分隔
 	criteria.WhereIn("source", strings.Split(req.Source, ","))
 	// 实现自动分页
@@ -137,5 +115,18 @@ func DeleteUser(c *gin.Context) {
 		"id": c.Params.ByName("id"),
 	})
 }
-```
 
+func mockUsers() {
+	var users []User
+	for i := 0; i < 200; i++ {
+		users = append(users, User{
+			Username: gofakeit.Username(),
+			Email:    gofakeit.Email(),
+			Mobile:   gofakeit.Phone(),
+			Status:   gofakeit.RandomString([]string{"active", "ban", "unavailable"}),
+			Weight:   gofakeit.IntRange(0, 300),
+			Source:   gofakeit.RandomString([]string{"wechat", "weibo", "twitter", "taobao", "qq", "cc"}),
+		})
+	}
+	storeit.New[User](db).Creates(context.Background(), users)
+}

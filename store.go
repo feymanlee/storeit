@@ -99,6 +99,18 @@ func (r *GormStore[M]) Update(ctx context.Context, column string, value interfac
 	return tx
 }
 
+// FindByIDs find the result by IDs
+func (r *GormStore[M]) FindByIDs(ctx context.Context, ids []any) ([]M, error) {
+	var models []M
+	err := r.present(ctx, nil).Find(&models, ids).Error
+	r.reset()
+	if err != nil {
+		return nil, err
+	}
+	return models, err
+}
+
+// FindByID find the result by ID
 func (r *GormStore[M]) FindByID(ctx context.Context, id any) (*M, error) {
 	var model M
 	err := r.present(ctx, nil).First(&model, id).Error
@@ -109,6 +121,7 @@ func (r *GormStore[M]) FindByID(ctx context.Context, id any) (*M, error) {
 	return &model, err
 }
 
+// First Execute the query and get the first result.
 func (r *GormStore[M]) First(ctx context.Context, criteria *Criteria) (*M, error) {
 	var model M
 	err := r.present(ctx, criteria).Take(&model).Error
@@ -120,6 +133,7 @@ func (r *GormStore[M]) First(ctx context.Context, criteria *Criteria) (*M, error
 	return &model, err
 }
 
+// Count Retrieve the "count" result of the query.
 func (r *GormStore[M]) Count(ctx context.Context, criteria *Criteria) (i int64, err error) {
 	var c Criteria
 	var model M
@@ -130,6 +144,42 @@ func (r *GormStore[M]) Count(ctx context.Context, criteria *Criteria) (i int64, 
 	c.unsetOrder()
 	c.unsetLimit()
 	err = r.present(ctx, &c).Model(&model).Count(&i).Error
+	return
+}
+
+// Sum Retrieve the sum of the values of a given column.
+func (r *GormStore[M]) Sum(ctx context.Context, column string, criteria *Criteria) (sum int64, err error) {
+	var c Criteria
+	var model M
+	err = copier.Copy(&c, criteria)
+	if err != nil {
+		return
+	}
+	c.unsetOrder()
+	c.unsetLimit()
+	row := r.present(ctx, &c).Model(&model).Select("SUM(" + column + ")").Row()
+	if row.Err() != nil {
+		return
+	}
+	err = row.Scan(&sum)
+	return
+}
+
+// Avg Retrieve the average of the values of a given column.
+func (r *GormStore[M]) Avg(ctx context.Context, column string, criteria *Criteria) (avg int64, err error) {
+	var c Criteria
+	var model M
+	err = copier.Copy(&c, criteria)
+	if err != nil {
+		return
+	}
+	c.unsetOrder()
+	c.unsetLimit()
+	row := r.present(ctx, &c).Model(&model).Select("AVG(" + column + ")").Row()
+	if row.Err() != nil {
+		return
+	}
+	err = row.Scan(&avg)
 	return
 }
 

@@ -100,7 +100,7 @@ func (r *GormStore[M]) Update(ctx context.Context, column string, value interfac
 }
 
 // FindByIDs find the result by IDs
-func (r *GormStore[M]) FindByIDs(ctx context.Context, ids any) ([]M, error) {
+func (r *GormStore[M]) FindByIDs(ctx context.Context, ids []int64) ([]M, error) {
 	var models []M
 	// if len(ids) < 1 {
 	// 	return nil, fmt.Errorf("id is empty")

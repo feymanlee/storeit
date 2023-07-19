@@ -98,6 +98,27 @@ func TestFindByID(t *testing.T) {
 	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
 }
 
+func TestFindByIDs(t *testing.T) {
+	db := setupTestDB()
+	defer clearTestData(db)
+	store := New[User](db)
+	model1 := &User{Name: "Test 1", Value: 1}
+	model2 := &User{Name: "Test 2", Value: 2}
+
+	tx1 := store.Insert(context.Background(), model1)
+	assert.NoError(t, tx1.Error)
+	tx2 := store.Insert(context.Background(), model2)
+	assert.NoError(t, tx2.Error)
+
+	result, err := store.FindByIDs(context.Background(), []uint{model1.ID, model2.ID})
+	assert.NoError(t, err)
+	assert.Equal(t, len(result), 2)
+	result, err = store.FindByIDs(context.Background(), []uint{100, 300})
+	assert.Error(t, err)
+	assert.Empty(t, result)
+	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+}
+
 func TestUpdate(t *testing.T) {
 	db := setupTestDB()
 	defer clearTestData(db)

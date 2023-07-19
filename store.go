@@ -2,7 +2,6 @@ package storeit
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/jinzhu/copier"
 	"gorm.io/gorm"
@@ -101,11 +100,11 @@ func (r *GormStore[M]) Update(ctx context.Context, column string, value interfac
 }
 
 // FindByIDs find the result by IDs
-func (r *GormStore[M]) FindByIDs(ctx context.Context, ids ...any) ([]M, error) {
+func (r *GormStore[M]) FindByIDs(ctx context.Context, ids any) ([]M, error) {
 	var models []M
-	if len(ids) < 1 {
-		return nil, fmt.Errorf("id is empty")
-	}
+	// if len(ids) < 1 {
+	// 	return nil, fmt.Errorf("id is empty")
+	// }
 	err := r.present(ctx, nil).Find(&models, ids).Error
 	r.reset()
 	if err != nil {

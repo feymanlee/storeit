@@ -2,8 +2,10 @@ package storeit
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/jinzhu/copier"
+	"golang.org/x/sync/errgroup"
 	"gorm.io/gorm"
 )
 
@@ -102,9 +104,9 @@ func (r *GormStore[M]) Update(ctx context.Context, column string, value interfac
 // FindByIDs find the result by IDs
 func (r *GormStore[M]) FindByIDs(ctx context.Context, ids []int64) ([]M, error) {
 	var models []M
-	// if len(ids) < 1 {
-	// 	return nil, fmt.Errorf("id is empty")
-	// }
+	if len(ids) < 1 {
+		return nil, fmt.Errorf("id is empty")
+	}
 	err := r.present(ctx, nil).Find(&models, ids).Error
 	r.reset()
 	if err != nil {
@@ -210,12 +212,22 @@ func (r *GormStore[M]) Paginate(ctx context.Context, criteria *Criteria) (*Pagin
 	if criteria.GetPerPage() < 1 {
 		criteria.PerPage(50)
 	}
-	total, err := r.Count(ctx, criteria)
-	if err != nil {
-		return nil, err
-	}
-	items, err := r.Find(ctx, criteria)
-	if err != nil {
+	var (
+		eg    errgroup.Group
+		total int64
+		items []M
+	)
+	eg.Go(func() error {
+		var err error
+		total, err = r.Count(ctx, criteria)
+		return err
+	})
+	eg.Go(func() error {
+		var err error
+		items, err = r.Find(ctx, criteria)
+		return err
+	})
+	if err := eg.Wait(); err != nil {
 		return nil, err
 	}
 	var pagination = Pagination[M]{

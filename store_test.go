@@ -42,7 +42,10 @@ func setupTestDB() *gorm.DB {
 		panic("failed to connect database")
 	}
 
-	db.AutoMigrate(&User{}, &Email{}, &Address{})
+	err = db.AutoMigrate(&User{}, &Email{}, &Address{})
+	if err != nil {
+		panic(err)
+	}
 	return db
 }
 
@@ -110,10 +113,10 @@ func TestFindByIDs(t *testing.T) {
 	tx2 := store.Insert(context.Background(), model2)
 	assert.NoError(t, tx2.Error)
 
-	result, err := store.FindByIDs(context.Background(), []uint{model1.ID, model2.ID})
+	result, err := store.FindByIDs(context.Background(), []int64{int64(model1.ID), int64(model2.ID)})
 	assert.NoError(t, err)
 	assert.Equal(t, len(result), 2)
-	result, err = store.FindByIDs(context.Background(), []uint{100, 300})
+	result, err = store.FindByIDs(context.Background(), []int64{100, 300})
 	assert.Error(t, err)
 	assert.Empty(t, result)
 	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
@@ -199,6 +202,10 @@ func TestPaginate(t *testing.T) {
 	defer clearTestData(db)
 	store := New[User](db)
 
+	criteria := NewCriteria().Page(1).PerPage(2).Order("nalue", false)
+	pagination, err := store.Paginate(context.Background(), criteria)
+	assert.Error(t, err)
+	assert.Nil(t, pagination)
 	model1 := &User{Name: "Test 1", Value: 1}
 	model2 := &User{Name: "Test 2", Value: 2}
 	model3 := &User{Name: "Test 3", Value: 3}
@@ -207,8 +214,8 @@ func TestPaginate(t *testing.T) {
 	store.Insert(context.Background(), model2)
 	store.Insert(context.Background(), model3)
 
-	criteria := NewCriteria().Page(1).PerPage(2).Order("value", false)
-	pagination, err := store.Paginate(context.Background(), criteria)
+	criteria = NewCriteria().Page(1).PerPage(2).Order("value", false)
+	pagination, err = store.Paginate(context.Background(), criteria)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(3), pagination.Total)
 	assert.Equal(t, 2, pagination.PerPage)

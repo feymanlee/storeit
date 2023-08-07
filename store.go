@@ -18,9 +18,14 @@ type Pagination[M any] struct {
 	Items   []M   `json:"items"`
 }
 
+type preloadEntry struct {
+	name string
+	args any
+}
+
 type GormStore[M interface{}] struct {
 	db            *gorm.DB
-	preloads      map[string][]any
+	preloads      []*preloadEntry
 	columns       []string
 	hidden        []string
 	scopeClosures []gormClosure
@@ -247,11 +252,14 @@ func (r *GormStore[M]) ScopeClosure(closure gormClosure) *GormStore[M] {
 	return r
 }
 
-func (r *GormStore[M]) AddPreload(preload string, args ...any) *GormStore[M] {
+func (r *GormStore[M]) AddPreload(name string, args ...any) *GormStore[M] {
 	if r.preloads == nil {
-		r.preloads = make(map[string][]any, 5)
+		r.preloads = make([]*preloadEntry, 0, 5)
 	}
-	r.preloads[preload] = args
+	r.preloads = append(r.preloads, &preloadEntry{
+		name: name,
+		args: args,
+	})
 
 	return r
 }
@@ -266,11 +274,11 @@ func (r *GormStore[M]) reset() *GormStore[M] {
 
 func (r *GormStore[M]) present(ctx context.Context, criteria *Criteria) *gorm.DB {
 	db := r.db.WithContext(ctx)
-	for p, args := range r.preloads {
-		if args == nil {
-			db = db.Preload(p)
+	for _, p := range r.preloads {
+		if p.args == nil {
+			db = db.Preload(p.name)
 		} else {
-			db = db.Preload(p, args...)
+			db = db.Preload(p.name, p.args)
 		}
 	}
 	if r.scopeClosures != nil {

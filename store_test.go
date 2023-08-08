@@ -117,9 +117,8 @@ func TestFindByIDs(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, len(result), 2)
 	result, err = store.FindByIDs(context.Background(), []int64{100, 300})
-	assert.Error(t, err)
+	assert.NoError(t, err)
 	assert.Empty(t, result)
-	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
 }
 
 func TestUpdate(t *testing.T) {

@@ -274,11 +274,13 @@ func (r *GormStore[M]) reset() *GormStore[M] {
 
 func (r *GormStore[M]) present(ctx context.Context, criteria *Criteria) *gorm.DB {
 	db := r.db.WithContext(ctx)
-	for _, p := range r.preloads {
-		if p.args == nil {
-			db = db.Preload(p.name)
-		} else {
-			db = db.Preload(p.name, p.args)
+	if r.preloads != nil {
+		for _, p := range r.preloads {
+			if p.args == nil {
+				db = db.Preload(p.name)
+			} else {
+				db = db.Preload(p.name, p.args)
+			}
 		}
 	}
 	if r.scopeClosures != nil {

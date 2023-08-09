@@ -25,7 +25,7 @@ type preloadEntry struct {
 
 type GormStore[M interface{}] struct {
 	db            *gorm.DB
-	preloads      []*preloadEntry
+	preloads      []preloadEntry
 	columns       []string
 	hidden        []string
 	scopeClosures []gormClosure
@@ -37,6 +37,7 @@ func New[M any](db *gorm.DB) *GormStore[M] {
 		columns:       make([]string, 0, 3),
 		hidden:        make([]string, 0, 3),
 		scopeClosures: make([]gormClosure, 0, 1),
+		preloads:      make([]preloadEntry, 0, 1),
 	}
 }
 
@@ -254,9 +255,9 @@ func (r *GormStore[M]) ScopeClosure(closure gormClosure) *GormStore[M] {
 
 func (r *GormStore[M]) AddPreload(name string, args ...any) *GormStore[M] {
 	if r.preloads == nil {
-		r.preloads = make([]*preloadEntry, 0, 5)
+		r.preloads = make([]preloadEntry, 0, 2)
 	}
-	r.preloads = append(r.preloads, &preloadEntry{
+	r.preloads = append(r.preloads, preloadEntry{
 		name: name,
 		args: args,
 	})

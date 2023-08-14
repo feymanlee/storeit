@@ -3,6 +3,7 @@ package storeit
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/jinzhu/copier"
 	"golang.org/x/sync/errgroup"
@@ -29,6 +30,8 @@ type GormStore[M interface{}] struct {
 	columns       []string
 	hidden        []string
 	scopeClosures []gormClosure
+	cloned        bool
+	mu            sync.Mutex
 }
 
 func New[M any](db *gorm.DB) *GormStore[M] {
@@ -246,23 +249,25 @@ func (r *GormStore[M]) Paginate(ctx context.Context, criteria *Criteria) (*Pagin
 }
 
 func (r *GormStore[M]) ScopeClosure(closure gormClosure) *GormStore[M] {
-	if r.scopeClosures == nil {
-		r.scopeClosures = make([]gormClosure, 2)
+	nr := r.onceClone()
+	if nr.scopeClosures == nil {
+		nr.scopeClosures = make([]gormClosure, 2)
 	}
-	r.scopeClosures = append(r.scopeClosures, closure)
+	nr.scopeClosures = append(nr.scopeClosures, closure)
 	return r
 }
 
 func (r *GormStore[M]) AddPreload(name string, args ...any) *GormStore[M] {
-	if r.preloads == nil {
-		r.preloads = make([]preloadEntry, 0, 2)
+	nr := r.onceClone()
+	if nr.preloads == nil {
+		nr.preloads = make([]preloadEntry, 0, 2)
 	}
-	r.preloads = append(r.preloads, preloadEntry{
+	nr.preloads = append(nr.preloads, preloadEntry{
 		name: name,
 		args: args,
 	})
 
-	return r
+	return nr
 }
 
 func (r *GormStore[M]) reset() *GormStore[M] {
@@ -343,13 +348,38 @@ func (r *GormStore[M]) present(ctx context.Context, criteria *Criteria) *gorm.DB
 }
 
 func (r *GormStore[M]) addColumns(columns []string) *GormStore[M] {
-	r.columns = append(r.columns, columns...)
+	nr := r.onceClone()
+	nr.columns = append(nr.columns, columns...)
 
-	return r
+	return nr
 }
 
 func (r *GormStore[M]) addHiddenColumns(columns []string) *GormStore[M] {
-	r.hidden = append(r.hidden, columns...)
+	nr := r.onceClone()
+	nr.hidden = append(nr.hidden, columns...)
 
-	return r
+	return nr
+}
+
+func (r *GormStore[M]) onceClone() *GormStore[M] {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cloned {
+		return r
+	}
+	newStore := New[M](r.db)
+	if r.scopeClosures != nil && len(r.scopeClosures) > 0 {
+		newStore.scopeClosures = r.scopeClosures
+	}
+	if r.hidden != nil && len(r.hidden) > 0 {
+		newStore.hidden = r.hidden
+	}
+	if r.preloads != nil && len(r.preloads) > 0 {
+		newStore.preloads = r.preloads
+	}
+	if r.columns != nil && len(r.columns) > 0 {
+		newStore.columns = r.columns
+	}
+	newStore.cloned = true
+	return newStore
 }

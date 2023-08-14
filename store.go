@@ -277,6 +277,9 @@ func (r *GormStore[M]) present(ctx context.Context, criteria *Criteria) *gorm.DB
 	db := r.db.WithContext(ctx)
 	if r.preloads != nil {
 		for _, p := range r.preloads {
+			if p.name == "" {
+				continue
+			}
 			if p.args == nil {
 				db = db.Preload(p.name)
 			} else {

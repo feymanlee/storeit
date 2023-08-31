@@ -337,12 +337,7 @@ func (r *GormStore[M]) present(ctx context.Context, criteria *Criteria) *gorm.DB
 		for _, item := range criteria.orders {
 			db = db.Order(item)
 		}
-		if offset := criteria.GetOffset(); offset > 0 {
-			db = db.Offset(offset)
-		}
-		if criteria.limit > 0 {
-			db = db.Limit(criteria.limit)
-		}
+		db = db.Limit(criteria.GetLimit()).Offset(criteria.GetOffset())
 	}
 	return db
 }

@@ -57,6 +57,7 @@ var conditionMapping = map[string]string{
 	"gte": ">=",
 	"lt":  "<",
 	"lte": "<=",
+	"in":  "IN",
 }
 
 var valueStringOperator = []string{criteriaLike, criteriaLLike, criteriaRLike, criteriaSort}

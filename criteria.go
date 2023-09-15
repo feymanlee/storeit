@@ -68,7 +68,7 @@ func NewCriteria() *Criteria {
 // ExtractCriteria 从结构体导出 Criteria
 func ExtractCriteria(source any) (*Criteria, error) {
 	if source == nil {
-		return nil, nil
+		return nil, errors.New("empty source")
 	}
 	t := reflect.TypeOf(source)
 	if t.Kind() != reflect.Struct {

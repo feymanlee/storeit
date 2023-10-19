@@ -62,8 +62,8 @@ func (r *GormStore[M]) Columns(fields []string) *GormStore[M] {
 	return r.addColumns(fields)
 }
 
-func (r *GormStore[M]) Create(ctx context.Context, model M) *gorm.DB {
-	tx := r.present(ctx, nil).Create(&model)
+func (r *GormStore[M]) Create(ctx context.Context, model *M) *gorm.DB {
+	tx := r.present(ctx, nil).Create(model)
 	r.reset()
 	return tx
 }

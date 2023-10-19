@@ -54,6 +54,10 @@ func (r *GormStore[M]) Hidden(fields []string) *GormStore[M] {
 	return r.addHiddenColumns(fields)
 }
 
+func (r *GormStore[M]) Emit(fields []string) *GormStore[M] {
+	return r.Hidden(fields)
+}
+
 func (r *GormStore[M]) Columns(fields []string) *GormStore[M] {
 	return r.addColumns(fields)
 }

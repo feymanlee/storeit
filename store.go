@@ -157,6 +157,13 @@ func (r *GormStore[M]) First(ctx context.Context, criteria *Criteria) (*M, error
 	return &model, err
 }
 
+// FindInBatches finds all records in batches of batchSize
+func (r *GormStore[M]) FindInBatches(ctx context.Context, models *[]M, batchSize int, fc func(tx *gorm.DB, batch int) error, criteria *Criteria) error {
+	err := r.present(ctx, criteria).FindInBatches(models, batchSize, fc).Error
+	r.reset()
+	return err
+}
+
 // Count Retrieve the "count" result of the query.
 func (r *GormStore[M]) Count(ctx context.Context, criteria *Criteria) (i int64, err error) {
 	var c Criteria

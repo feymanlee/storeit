@@ -228,7 +228,8 @@ func (r *GormStore[M]) Find(ctx context.Context, criteria *Criteria) ([]M, error
 }
 
 func (r *GormStore[M]) Pluck(ctx context.Context, column string, dest any, criteria *Criteria) error {
-	err := r.present(ctx, criteria).Pluck(column, dest).Error
+	var model M
+	err := r.present(ctx, criteria).Model(&model).Pluck(column, dest).Error
 	r.reset()
 
 	return err

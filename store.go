@@ -227,6 +227,13 @@ func (r *GormStore[M]) Find(ctx context.Context, criteria *Criteria) ([]M, error
 	return models, nil
 }
 
+func (r *GormStore[M]) Pluck(ctx context.Context, column string, dest any, criteria *Criteria) error {
+	err := r.present(ctx, criteria).Pluck(column, dest).Error
+	r.reset()
+
+	return err
+}
+
 func (r *GormStore[M]) All(ctx context.Context) ([]M, error) {
 	return r.Find(ctx, nil)
 }

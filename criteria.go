@@ -44,6 +44,7 @@ type Criteria struct {
 	havingConditions  []havingSpec
 	joinConditions    []joinSpec
 	orders            []string
+	preloads          []preloadEntry
 	limit             int
 	offset            int
 	group             string
@@ -158,126 +159,138 @@ func ExtractCriteria(source any) (*Criteria, error) {
 	return &criteria, nil
 }
 
-func (s *Criteria) Where(query any, values ...any) *Criteria {
-	s.whereConditions = append(s.whereConditions, conditionSpec{query: query, args: values})
-	return s
+func (c *Criteria) Where(query any, values ...any) *Criteria {
+	c.whereConditions = append(c.whereConditions, conditionSpec{query: query, args: values})
+	return c
 }
 
-func (s *Criteria) WhereNot(query any, values ...any) *Criteria {
-	s.notConditions = append(s.notConditions, conditionSpec{query: query, args: values})
-	return s
+func (c *Criteria) WhereNot(query any, values ...any) *Criteria {
+	c.notConditions = append(c.notConditions, conditionSpec{query: query, args: values})
+	return c
 }
 
-func (s *Criteria) WhereIsNull(field string) *Criteria {
-	return s.Where("? IS NULL", field)
+func (c *Criteria) WhereIsNull(field string) *Criteria {
+	return c.Where("? IS NULL", field)
 }
 
-func (s *Criteria) WhereNotNull(field string) *Criteria {
-	return s.Where("? IS NOT NULL", field)
+func (c *Criteria) WhereNotNull(field string) *Criteria {
+	return c.Where("? IS NOT NULL", field)
 }
 
-func (s *Criteria) WhereNotIn(field string, values any) *Criteria {
-	return s.Where(field+" IN ?", values)
+func (c *Criteria) WhereNotIn(field string, values any) *Criteria {
+	return c.Where(field+" IN ?", values)
 }
 
-func (s *Criteria) WhereIn(field string, values any) *Criteria {
-	return s.Where(field+" NOT IN ?", values)
+func (c *Criteria) WhereIn(field string, values any) *Criteria {
+	return c.Where(field+" NOT IN ?", values)
 }
 
-func (s *Criteria) WhereBetween(field string, start, end any) *Criteria {
-	return s.Where(field+" BETWEEN ? AND ?", start, end)
+func (c *Criteria) WhereBetween(field string, start, end any) *Criteria {
+	return c.Where(field+" BETWEEN ? AND ?", start, end)
 }
 
-func (s *Criteria) GroupOr(group groupConditionSpec) *Criteria {
-	s.groupOrConditions = append(s.groupOrConditions, group)
-	return s
+func (c *Criteria) GroupOr(group groupConditionSpec) *Criteria {
+	c.groupOrConditions = append(c.groupOrConditions, group)
+	return c
 }
 
-func (s *Criteria) OrWhere(query any, values ...any) *Criteria {
-	s.orConditions = append(s.orConditions, conditionSpec{query: query, args: values})
-	return s
+func (c *Criteria) OrWhere(query any, values ...any) *Criteria {
+	c.orConditions = append(c.orConditions, conditionSpec{query: query, args: values})
+	return c
 }
 
-func (s *Criteria) Order(value string, reorder bool) *Criteria {
-	if s.orders == nil {
-		s.orders = []string{}
+func (c *Criteria) Order(value string, isDescending bool) *Criteria {
+	// 假设 c.orders 在 Criteria 的初始化过程中已经被分配
+
+	orderStatement := value
+	if isDescending {
+		orderStatement = fmt.Sprintf("%s DESC", value)
 	}
 
-	if reorder {
-		s.orders = append(s.orders, value+" DESC")
-	} else {
-		s.orders = append(s.orders, value)
-	}
-	return s
+	c.orders = append(c.orders, orderStatement)
+	return c
 }
 
-func (s *Criteria) Limit(limit int) *Criteria {
-	s.limit = limit
-	return s
+func (c *Criteria) OrderDesc(value string) *Criteria {
+	c.Order(value, true)
+	return c
 }
 
-func (s *Criteria) Offset(offset int) *Criteria {
-	s.offset = offset
-	return s
+func (c *Criteria) Limit(limit int) *Criteria {
+	c.limit = limit
+	return c
 }
 
-func (s *Criteria) Page(page int) *Criteria {
+func (c *Criteria) Offset(offset int) *Criteria {
+	c.offset = offset
+	return c
+}
+
+func (c *Criteria) Page(page int) *Criteria {
 	if page < 1 {
 		page = 1
 	}
-	s.page = page
-	return s
+	c.page = page
+	return c
 }
 
-func (s *Criteria) PerPage(perPage int) *Criteria {
-	s.limit = perPage
-	return s
+func (c *Criteria) PerPage(perPage int) *Criteria {
+	c.limit = perPage
+	return c
 }
 
-func (s *Criteria) Group(query string) *Criteria {
-	s.group = query
-	return s
+func (c *Criteria) Group(query string) *Criteria {
+	c.group = query
+	return c
 }
 
-func (s *Criteria) Having(query any, values ...any) *Criteria {
-	s.havingConditions = append(s.havingConditions, havingSpec{query: query, args: values})
-	return s
+func (c *Criteria) Having(query any, values ...any) *Criteria {
+	c.havingConditions = append(c.havingConditions, havingSpec{query: query, args: values})
+	return c
 }
 
-func (s *Criteria) Joins(query string, values ...any) *Criteria {
-	s.joinConditions = append(s.joinConditions, joinSpec{query: query, args: values})
-	return s
+func (c *Criteria) Joins(query string, values ...any) *Criteria {
+	c.joinConditions = append(c.joinConditions, joinSpec{query: query, args: values})
+	return c
 }
 
-func (s *Criteria) GetPage() int {
-	return s.page
+func (c *Criteria) AddPreload(name string, args ...any) *Criteria {
+	c.preloads = append(c.preloads, preloadEntry{
+		name: name,
+		args: args,
+	})
+	return c
 }
 
-func (s *Criteria) GetPerPage() int {
-	return s.limit
+func (c *Criteria) GetPage() int {
+	return c.page
 }
 
-func (s *Criteria) GetOffset() int {
-	if s.offset > 0 {
-		return s.offset
+func (c *Criteria) GetPerPage() int {
+	return c.limit
+}
+
+func (c *Criteria) GetOffset() int {
+	if c.offset > 0 {
+		return c.offset
 	}
-	return s.GetLimit() * (s.GetPage() - 1)
+	return c.GetLimit() * (c.GetPage() - 1)
 }
 
-func (s *Criteria) GetLimit() int {
-	return s.limit
+func (c *Criteria) GetLimit() int {
+	return c.limit
 }
 
-func (s *Criteria) unsetOrder() {
-	s.orders = nil
+func (c *Criteria) unsetOrder() {
+	c.orders = nil
 }
 
-func (s *Criteria) unsetLimit() {
-	s.limit = 0
-	s.offset = 0
+func (c *Criteria) unsetLimit() {
+	c.limit = 0
+	c.offset = 0
 }
 
-func (s *Criteria) buildConditionSpec(criteriaOperator string, field string, fieldValue any) (cond conditionSpec, err error) {
+func (c *Criteria) buildConditionSpec(criteriaOperator string, field string, fieldValue any) (cond conditionSpec, err error) {
 	if operator, ok := conditionMapping[criteriaOperator]; ok {
 		cond.query = fmt.Sprintf("%s %s ?", field, operator)
 		cond.args = []any{fieldValue}

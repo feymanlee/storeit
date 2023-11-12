@@ -6,7 +6,7 @@ require (
 	github.com/jinzhu/copier v0.3.5
 	github.com/stretchr/testify v1.8.2
 	golang.org/x/exp v0.0.0-20230321023759-10a507213a29
-	golang.org/x/sync v0.3.0
+	golang.org/x/sync v0.4.0
 	gorm.io/driver/sqlite v1.5.0
 	gorm.io/gorm v1.25.0
 )

@@ -21,7 +21,7 @@ type Pagination[M any] struct {
 
 type preloadEntry struct {
 	name string
-	args any
+	args []interface{}
 }
 
 type GormStore[M interface{}] struct {
@@ -36,11 +36,7 @@ type GormStore[M interface{}] struct {
 
 func New[M any](db *gorm.DB) *GormStore[M] {
 	return &GormStore[M]{
-		db:            db,
-		columns:       make([]string, 0, 3),
-		hidden:        make([]string, 0, 3),
-		scopeClosures: make([]gormClosure, 0, 1),
-		preloads:      make([]preloadEntry, 0, 1),
+		db: db,
 	}
 }
 
@@ -284,9 +280,6 @@ func (r *GormStore[M]) ScopeClosure(closure gormClosure) *GormStore[M] {
 
 func (r *GormStore[M]) AddPreload(name string, args ...any) *GormStore[M] {
 	nr := r.onceClone()
-	if nr.preloads == nil {
-		nr.preloads = make([]preloadEntry, 0, 2)
-	}
 	nr.preloads = append(nr.preloads, preloadEntry{
 		name: name,
 		args: args,
@@ -306,14 +299,18 @@ func (r *GormStore[M]) reset() *GormStore[M] {
 func (r *GormStore[M]) present(ctx context.Context, criteria *Criteria) *gorm.DB {
 	db := r.db.WithContext(ctx)
 	if r.preloads != nil {
+		// 合并查询条件里面的 preloads
+		if criteria.preloads != nil {
+			r.preloads = append(r.preloads, criteria.preloads...)
+		}
 		for _, p := range r.preloads {
 			if p.name == "" {
 				continue
 			}
-			if p.args == nil {
+			if IsEmpty(p.args) {
 				db = db.Preload(p.name)
 			} else {
-				db = db.Preload(p.name, p.args)
+				db = db.Preload(p.name, p.args...)
 			}
 		}
 	}

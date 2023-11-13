@@ -300,7 +300,7 @@ func (r *GormStore[M]) present(ctx context.Context, criteria *Criteria) *gorm.DB
 	db := r.db.WithContext(ctx)
 	if r.preloads != nil {
 		// 合并查询条件里面的 preloads
-		if criteria.preloads != nil {
+		if criteria != nil && criteria.preloads != nil {
 			r.preloads = append(r.preloads, criteria.preloads...)
 		}
 		for _, p := range r.preloads {

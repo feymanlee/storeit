@@ -104,7 +104,7 @@ func (r *GormStore[M]) Updates(ctx context.Context, attributes any, criteria *Cr
 	return tx
 }
 
-func (r *GormStore[M]) Save(ctx context.Context, model *M) *gorm.DB {
+func (r *GormStore[M]) Save(ctx context.Context, model M) *gorm.DB {
 	tx := r.present(ctx, nil).Save(&model)
 	return tx
 }

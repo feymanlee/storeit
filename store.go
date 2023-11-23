@@ -298,6 +298,8 @@ func (r *GormStore[M]) reset() *GormStore[M] {
 	r.columns = nil
 	r.hidden = nil
 	r.preloads = nil
+	r.scopeClosures = nil
+	r.unscoped = false
 
 	return r
 }

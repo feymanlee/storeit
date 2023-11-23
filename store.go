@@ -32,6 +32,7 @@ type GormStore[M interface{}] struct {
 	scopeClosures []gormClosure
 	cloned        bool
 	mu            sync.Mutex
+	unscoped      bool
 }
 
 func New[M any](db *gorm.DB) *GormStore[M] {
@@ -44,6 +45,11 @@ func (r *GormStore[M]) Insert(ctx context.Context, model *M) *gorm.DB {
 	tx := r.db.WithContext(ctx).Create(model)
 	r.reset()
 	return tx
+}
+
+func (r *GormStore[M]) Unscoped() *GormStore[M] {
+	r.unscoped = true
+	return r
 }
 
 func (r *GormStore[M]) Hidden(fields []string) *GormStore[M] {
@@ -324,6 +330,9 @@ func (r *GormStore[M]) present(ctx context.Context, criteria *Criteria) *gorm.DB
 	}
 	if r.columns != nil && len(r.columns) > 0 {
 		db = db.Select(r.columns)
+	}
+	if r.unscoped {
+		db = db.Unscoped()
 	}
 	if criteria != nil {
 		for _, group := range criteria.groupOrConditions {

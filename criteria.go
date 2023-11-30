@@ -177,11 +177,11 @@ func (c *Criteria) WhereNotNull(field string) *Criteria {
 	return c.Where("? IS NOT NULL", field)
 }
 
-func (c *Criteria) WhereNotIn(field string, values any) *Criteria {
+func (c *Criteria) WhereIn(field string, values any) *Criteria {
 	return c.Where(field+" IN ?", values)
 }
 
-func (c *Criteria) WhereIn(field string, values any) *Criteria {
+func (c *Criteria) WhereNotIn(field string, values any) *Criteria {
 	return c.Where(field+" NOT IN ?", values)
 }
 
@@ -213,6 +213,11 @@ func (c *Criteria) Order(value string, isDescending bool) *Criteria {
 
 func (c *Criteria) OrderDesc(value string) *Criteria {
 	c.Order(value, true)
+	return c
+}
+
+func (c *Criteria) OrderAsc(value string) *Criteria {
+	c.Order(value, false)
 	return c
 }
 

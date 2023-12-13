@@ -25,6 +25,7 @@ type preloadEntry struct {
 }
 
 type GormStore[M interface{}] struct {
+	tx            *gorm.DB
 	db            *gorm.DB
 	preloads      []preloadEntry
 	columns       []string
@@ -41,8 +42,18 @@ func New[M any](db *gorm.DB) *GormStore[M] {
 	}
 }
 
+func (r *GormStore[M]) SetTx(tx *gorm.DB) *GormStore[M] {
+	r.tx = tx
+	return r
+}
+
 func (r *GormStore[M]) Insert(ctx context.Context, model *M) *gorm.DB {
-	tx := r.db.WithContext(ctx).Create(model)
+	var tx *gorm.DB
+	if r.tx != nil {
+		tx = r.tx.WithContext(ctx).Create(model)
+	} else {
+		tx = r.db.WithContext(ctx).Create(model)
+	}
 	r.reset()
 	return tx
 }
@@ -300,12 +311,18 @@ func (r *GormStore[M]) reset() *GormStore[M] {
 	r.preloads = nil
 	r.scopeClosures = nil
 	r.unscoped = false
+	r.tx = nil
 
 	return r
 }
 
 func (r *GormStore[M]) present(ctx context.Context, criteria *Criteria) *gorm.DB {
-	db := r.db.WithContext(ctx)
+	var db *gorm.DB
+	if r.tx != nil {
+		db = r.tx.WithContext(ctx)
+	} else {
+		db = r.db.WithContext(ctx)
+	}
 	if r.preloads != nil {
 		// 合并查询条件里面的 preloads
 		if criteria != nil && criteria.preloads != nil {

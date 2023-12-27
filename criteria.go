@@ -170,11 +170,11 @@ func (c *Criteria) WhereNot(query any, values ...any) *Criteria {
 }
 
 func (c *Criteria) WhereIsNull(field string) *Criteria {
-	return c.Where("? IS NULL", field)
+	return c.Where(field + " IS NULL")
 }
 
 func (c *Criteria) WhereNotNull(field string) *Criteria {
-	return c.Where("? IS NOT NULL", field)
+	return c.Where(field+" IS NOT NULL", field)
 }
 
 func (c *Criteria) WhereIn(field string, values any) *Criteria {

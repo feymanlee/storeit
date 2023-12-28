@@ -201,8 +201,8 @@ func (r *GormStore[M]) Sum(ctx context.Context, column string, criteria *Criteri
 	}
 	c.unsetOrder()
 	c.unsetLimit()
-	ret := r.present(ctx, &c).Model(&model).Select("SUM(" + column + ")").Scan(&sum).Error
-	if ret.Error != nil {
+	err = r.present(ctx, &c).Model(&model).Select("SUM(" + column + ")").Scan(&sum).Error
+	if err != nil {
 		return
 	}
 	return

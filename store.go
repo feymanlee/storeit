@@ -192,38 +192,43 @@ func (r *GormStore[M]) Count(ctx context.Context, criteria *Criteria) (i int64, 
 }
 
 // Sum Retrieve the sum of the values of a given column.
-func (r *GormStore[M]) Sum(ctx context.Context, column string, criteria *Criteria) (sum int64, err error) {
+func (r *GormStore[M]) Sum(ctx context.Context, column string, criteria *Criteria) (sum float64, err error) {
 	var c Criteria
 	var model M
+	var result struct {
+		Total float64
+	}
 	err = copier.Copy(&c, criteria)
 	if err != nil {
 		return
 	}
 	c.unsetOrder()
 	c.unsetLimit()
-	err = r.present(ctx, &c).Model(&model).Select("SUM(" + column + ")").Scan(&sum).Error
+	err = r.present(ctx, &c).Model(&model).Select("SUM(" + column + ") as total").Scan(&result).Error
 	if err != nil {
 		return
 	}
-	return
+	return result.Total, nil
 }
 
 // Avg Retrieve the average of the values of a given column.
-func (r *GormStore[M]) Avg(ctx context.Context, column string, criteria *Criteria) (avg int64, err error) {
+func (r *GormStore[M]) Avg(ctx context.Context, column string, criteria *Criteria) (avg float64, err error) {
 	var c Criteria
 	var model M
 	err = copier.Copy(&c, criteria)
 	if err != nil {
 		return
 	}
+	var result struct {
+		Avg float64
+	}
 	c.unsetOrder()
 	c.unsetLimit()
-	row := r.present(ctx, &c).Model(&model).Select("AVG(" + column + ")").Row()
-	if row.Err() != nil {
+	err = r.present(ctx, &c).Model(&model).Select("AVG(" + column + ") as avg").Scan(&result).Error
+	if err != nil {
 		return
 	}
-	err = row.Scan(&avg)
-	return
+	return result.Avg, nil
 }
 
 func (r *GormStore[M]) Find(ctx context.Context, criteria *Criteria) ([]M, error) {

@@ -133,6 +133,20 @@ func (r *GormStore[M]) Update(ctx context.Context, column string, value interfac
 	return tx
 }
 
+func (r *GormStore[M]) UpdateById(ctx context.Context, id any, column string, value interface{}) *gorm.DB {
+	var model M
+	tx := r.present(ctx, nil).Model(&model).Where("id = ?", id).Update(column, value)
+	r.reset()
+	return tx
+}
+
+func (r *GormStore[M]) UpdatesById(ctx context.Context, id any, updates interface{}) *gorm.DB {
+	var model M
+	tx := r.present(ctx, nil).Model(&model).Where("id = ?", id).Updates(updates)
+	r.reset()
+	return tx
+}
+
 // FindByIDs find the result by IDs
 func (r *GormStore[M]) FindByIDs(ctx context.Context, ids []int64) ([]M, error) {
 	var models []M

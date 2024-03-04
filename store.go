@@ -63,6 +63,11 @@ func (r *GormStore[M]) Unscoped() *GormStore[M] {
 	return r
 }
 
+func (r *GormStore[M]) WithTrashed(with bool) *GormStore[M] {
+	r.unscoped = with
+	return r
+}
+
 func (r *GormStore[M]) Hidden(fields []string) *GormStore[M] {
 	return r.addHiddenColumns(fields)
 }

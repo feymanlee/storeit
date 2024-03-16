@@ -435,6 +435,10 @@ func (r *GormStore[M]) addHiddenColumns(columns []string) *GormStore[M] {
 	return nr
 }
 
+func (r *GormStore[M]) New() *GormStore[M] {
+	return New[M](r.db)
+}
+
 func (r *GormStore[M]) onceClone() *GormStore[M] {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -442,18 +446,10 @@ func (r *GormStore[M]) onceClone() *GormStore[M] {
 		return r
 	}
 	newStore := New[M](r.db)
-	if r.scopeClosures != nil && len(r.scopeClosures) > 0 {
-		newStore.scopeClosures = r.scopeClosures
-	}
-	if r.hidden != nil && len(r.hidden) > 0 {
-		newStore.hidden = r.hidden
-	}
-	if r.preloads != nil && len(r.preloads) > 0 {
-		newStore.preloads = r.preloads
-	}
-	if r.columns != nil && len(r.columns) > 0 {
-		newStore.columns = r.columns
-	}
+	newStore.scopeClosures = r.scopeClosures
+	newStore.hidden = r.hidden
+	newStore.preloads = r.preloads
+	newStore.columns = r.columns
 	newStore.cloned = true
 	return newStore
 }

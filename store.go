@@ -64,8 +64,9 @@ func (r *GormStore[M]) Unscoped() *GormStore[M] {
 }
 
 func (r *GormStore[M]) WithTrashed(with bool) *GormStore[M] {
-	r.unscoped = with
-	return r
+	nr := r.onceClone()
+	nr.unscoped = with
+	return nr
 }
 
 func (r *GormStore[M]) Hidden(fields []string) *GormStore[M] {
@@ -73,7 +74,8 @@ func (r *GormStore[M]) Hidden(fields []string) *GormStore[M] {
 }
 
 func (r *GormStore[M]) Emit(fields []string) *GormStore[M] {
-	return r.Hidden(fields)
+	nr := r.onceClone()
+	return nr.Hidden(fields)
 }
 
 func (r *GormStore[M]) Columns(fields []string) *GormStore[M] {
@@ -435,10 +437,6 @@ func (r *GormStore[M]) addHiddenColumns(columns []string) *GormStore[M] {
 	return nr
 }
 
-func (r *GormStore[M]) New() *GormStore[M] {
-	return New[M](r.db)
-}
-
 func (r *GormStore[M]) onceClone() *GormStore[M] {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -446,10 +444,18 @@ func (r *GormStore[M]) onceClone() *GormStore[M] {
 		return r
 	}
 	newStore := New[M](r.db)
-	newStore.scopeClosures = r.scopeClosures
-	newStore.hidden = r.hidden
-	newStore.preloads = r.preloads
-	newStore.columns = r.columns
+	if len(r.scopeClosures) > 0 {
+		newStore.scopeClosures = append(newStore.scopeClosures, r.scopeClosures...)
+	}
+	if len(r.hidden) > 0 {
+		newStore.hidden = append(newStore.hidden, r.hidden...)
+	}
+	if len(r.preloads) > 0 {
+		newStore.preloads = append(newStore.preloads, r.preloads...)
+	}
+	if len(r.columns) > 0 {
+		newStore.columns = append(newStore.columns, r.columns...)
+	}
 	newStore.cloned = true
 	return newStore
 }

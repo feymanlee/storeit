@@ -438,11 +438,11 @@ func (r *GormStore[M]) addHiddenColumns(columns []string) *GormStore[M] {
 }
 
 func (r *GormStore[M]) onceClone() *GormStore[M] {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.cloned {
 		return r
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	newStore := New[M](r.db)
 	if len(r.scopeClosures) > 0 {
 		newStore.scopeClosures = append(newStore.scopeClosures, r.scopeClosures...)

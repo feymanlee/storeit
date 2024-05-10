@@ -43,8 +43,9 @@ func New[M any](db *gorm.DB) *GormStore[M] {
 }
 
 func (r *GormStore[M]) SetTx(tx *gorm.DB) *GormStore[M] {
-	r.tx = tx
-	return r
+	nr := r.onceClone()
+	nr.tx = tx
+	return nr
 }
 
 func (r *GormStore[M]) Insert(ctx context.Context, model *M) *gorm.DB {
@@ -59,8 +60,9 @@ func (r *GormStore[M]) Insert(ctx context.Context, model *M) *gorm.DB {
 }
 
 func (r *GormStore[M]) Unscoped() *GormStore[M] {
-	r.unscoped = true
-	return r
+	nr := r.onceClone()
+	nr.unscoped = true
+	return nr
 }
 
 func (r *GormStore[M]) WithTrashed(with bool) *GormStore[M] {
@@ -456,6 +458,7 @@ func (r *GormStore[M]) onceClone() *GormStore[M] {
 	if len(r.columns) > 0 {
 		newStore.columns = append(newStore.columns, r.columns...)
 	}
+	newStore.unscoped = r.unscoped
 	newStore.cloned = true
 	return newStore
 }

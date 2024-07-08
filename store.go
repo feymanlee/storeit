@@ -214,6 +214,15 @@ func (r *GormStore[M]) Count(ctx context.Context, criteria *Criteria) (i int64, 
 	return
 }
 
+// Exists check if the result exists
+func (r *GormStore[M]) Exists(ctx context.Context, criteria *Criteria) (bool, error) {
+	count, err := r.Count(ctx, criteria)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // Sum Retrieve the sum of the values of a given column.
 func (r *GormStore[M]) Sum(ctx context.Context, column string, criteria *Criteria) (sum float64, err error) {
 	var c Criteria

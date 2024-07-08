@@ -200,8 +200,6 @@ func (c *Criteria) OrWhere(query any, values ...any) *Criteria {
 }
 
 func (c *Criteria) Order(value string, isDescending bool) *Criteria {
-	// 假设 c.orders 在 Criteria 的初始化过程中已经被分配
-
 	orderStatement := value
 	if isDescending {
 		orderStatement = fmt.Sprintf("%s DESC", value)

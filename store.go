@@ -324,11 +324,8 @@ func (r *GormStore[M]) Paginate(ctx context.Context, criteria *Criteria) (*Pagin
 
 func (r *GormStore[M]) ScopeClosure(closure gormClosure) *GormStore[M] {
 	nr := r.onceClone()
-	if nr.scopeClosures == nil {
-		nr.scopeClosures = make([]gormClosure, 2)
-	}
 	nr.scopeClosures = append(nr.scopeClosures, closure)
-	return r
+	return nr
 }
 
 func (r *GormStore[M]) AddPreload(name string, args ...any) *GormStore[M] {
@@ -375,15 +372,15 @@ func (r *GormStore[M]) present(ctx context.Context, criteria *Criteria) *gorm.DB
 			}
 		}
 	}
-	if r.scopeClosures != nil {
+	if len(r.scopeClosures) > 0 {
 		for _, closure := range r.scopeClosures {
 			db = closure(db)
 		}
 	}
-	if r.hidden != nil {
+	if len(r.hidden) > 0 {
 		db = db.Omit(r.hidden...)
 	}
-	if r.columns != nil && len(r.columns) > 0 {
+	if len(r.columns) > 0 {
 		db = db.Select(r.columns)
 	}
 	if r.unscoped {

@@ -43,6 +43,9 @@ func New[M any](db *gorm.DB) *GormStore[M] {
 }
 
 func (r *GormStore[M]) SetTx(tx *gorm.DB) *GormStore[M] {
+	if r.tx != nil {
+		return r
+	}
 	nr := r.onceClone()
 	nr.tx = tx
 	return nr

@@ -200,7 +200,7 @@ func (c *Criteria) OrWhere(query any, values ...any) *Criteria {
 }
 
 func (c *Criteria) Order(value string, isDescending bool) *Criteria {
-	orderStatement := value
+	orderStatement := QuoteReservedWord(value)
 	if isDescending {
 		orderStatement = fmt.Sprintf("%s DESC", value)
 	}

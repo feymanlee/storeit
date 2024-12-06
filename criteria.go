@@ -185,6 +185,18 @@ func (c *Criteria) WhereNotIn(field string, values any) *Criteria {
 	return c.Where(field+" NOT IN ?", values)
 }
 
+func (c *Criteria) WhereStartWith(field string, value string) *Criteria {
+	return c.Where(field+" LIKE ?", "%"+value)
+}
+
+func (c *Criteria) WhereEndWith(field string, value string) *Criteria {
+	return c.Where(field+" LIKE ?", value+"%")
+}
+
+func (c *Criteria) WhereContains(field string, value string) *Criteria {
+	return c.Where(field+" LIKE ?", "%"+value+"%")
+}
+
 func (c *Criteria) WhereBetween(field string, start, end any) *Criteria {
 	return c.Where(field+" BETWEEN ? AND ?", start, end)
 }
@@ -202,7 +214,7 @@ func (c *Criteria) OrWhere(query any, values ...any) *Criteria {
 func (c *Criteria) Order(value string, isDescending bool) *Criteria {
 	orderStatement := QuoteReservedWord(value)
 	if isDescending {
-		orderStatement = fmt.Sprintf("%s DESC", value)
+		orderStatement = fmt.Sprintf("%s DESC", orderStatement)
 	}
 
 	c.orders = append(c.orders, orderStatement)

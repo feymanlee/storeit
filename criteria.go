@@ -186,11 +186,11 @@ func (c *Criteria) WhereNotIn(field string, values any) *Criteria {
 }
 
 func (c *Criteria) WhereStartWith(field string, value string) *Criteria {
-	return c.Where(field+" LIKE ?", "%"+value)
+	return c.Where(field+" LIKE ?", value+"%")
 }
 
 func (c *Criteria) WhereEndWith(field string, value string) *Criteria {
-	return c.Where(field+" LIKE ?", value+"%")
+	return c.Where(field+" LIKE ?", "%"+value)
 }
 
 func (c *Criteria) WhereContains(field string, value string) *Criteria {

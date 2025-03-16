@@ -266,6 +266,13 @@ func (r *GormStore[M]) Avg(ctx context.Context, column string, criteria *Criteri
 	return result.Avg, nil
 }
 
+func (r *GormStore[M]) Scan(ctx context.Context, criteria *Criteria, dst any) (err error) {
+	var model M
+	err = r.present(ctx, criteria).Model(&model).Scan(dst).Error
+	r.reset()
+	return err
+}
+
 func (r *GormStore[M]) Find(ctx context.Context, criteria *Criteria) ([]M, error) {
 	var models []M
 
@@ -429,6 +436,9 @@ func (r *GormStore[M]) present(ctx context.Context, criteria *Criteria) *gorm.DB
 		// 有 offset 一定要有 limit
 		if criteria.limit > 0 || criteria.GetOffset() > 0 {
 			db = db.Limit(criteria.limit)
+		}
+		if criteria.group != "" {
+			db = db.Group(criteria.group)
 		}
 	}
 	return db

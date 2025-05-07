@@ -416,16 +416,16 @@ func (r *GormStore[M]) present(ctx context.Context, criteria *Criteria) *gorm.DB
 			db = db.Where(item.query, item.args...)
 		}
 		for _, item := range criteria.orConditions {
-			db = db.Or(item.query, item.args)
+			db = db.Or(item.query, item.args...)
 		}
 		for _, item := range criteria.notConditions {
-			db = db.Not(item.query, item.args)
+			db = db.Not(item.query, item.args...)
 		}
 		for _, item := range criteria.havingConditions {
-			db = db.Having(item.query, item.args)
+			db = db.Having(item.query, item.args...)
 		}
 		for _, item := range criteria.joinConditions {
-			db = db.Joins(item.query, item.args)
+			db = db.Joins(item.query, item.args...)
 		}
 		for _, item := range criteria.orders {
 			db = db.Order(item)

@@ -16,19 +16,29 @@ jobs:
     name: Test on go ${{ matrix.go_version }} and ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [ ubuntu-latest, windows-latest ]
-        go_version: [ 1.18, 1.19, '1.20' ]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go_version: [1.18, 1.19, '1.20']
 
     steps:
       - name: Check out code
         uses: actions/checkout@v3
 
-      - name: Setup Go Faster
-        uses: WillAbides/setup-go-faster@v1.8.0
-        timeout-minutes: 3
+      - name: Set up Go
+        uses: actions/setup-go@v4
         with:
           go-version: ${{ matrix.go_version }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
 
       - name: Revive check
         uses: morphy2k/revive-action@v2.5.1
@@ -39,17 +49,18 @@ jobs:
         if: ${{ matrix.os == 'ubuntu-latest' && matrix.go_version == '1.18'  }}
         with:
           github_token: ${{ secrets.github_token }}
-          # Change reviewdog reporter if you need [github-pr-check,github-check,github-pr-review].
           reporter: github-check
-          # Report all results. [added,diff_context,file,nofilter].
           filter_mode: added
-          # Exit with 1 when it finds at least one finding.
           fail_on_error: false
 
-      - name: Unit tests
-        # run: go test -v -cover ./...
-        # must add " for profile.cov on Windows OS
-        run: go test -coverprofile="profile.cov" ./...
+      - name: Run Unit tests
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            go test -v -coverprofile="profile.cov" ./...
+          else
+            go test -v -coverprofile=profile.cov ./...
+          fi
 
       - name: Send coverage
         uses: shogo82148/actions-goveralls@v1
@@ -59,8 +70,6 @@ jobs:
           flag-name: Go-${{ matrix.go_version }}
           parallel: true
 
-  # notifies that all test jobs are finished.
-  # https://github.com/shogo82148/actions-goveralls
   finish:
     needs: test
     runs-on: ubuntu-latest

@@ -64,7 +64,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 
 	db, err := gorm.Open(sqlite.Open(dbName), &gorm.Config{
 		SkipDefaultTransaction:                   true,
-		Logger:                                   logger.Default.LogMode(logger.Info),
+		Logger:                                   logger.Default.LogMode(logger.Silent),
 		DisableForeignKeyConstraintWhenMigrating: true,
 	})
 	assert.NoError(t, err)

@@ -1,5 +1,12 @@
 # storeit
 
+![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/feymanlee/storeit?style=flat-square)
+[![Go Report Card](https://goreportcard.com/badge/github.com/feymanlee/storeit)](https://goreportcard.com/report/github.com/feymanlee/cacheit)
+[![Unit-Tests](https://github.com/feymanlee/storeit/workflows/Unit-Tests/badge.svg)](https://github.com/feymanlee/storeit/actions)
+[![Coverage Status](https://coveralls.io/repos/github/feymanlee/storeit/badge.svg?branch=main)](https://coveralls.io/github/feymanlee/cacheit?branch=main)
+[![Go Reference](https://pkg.go.dev/badge/github.com/feymanlee/storeit.svg)](https://pkg.go.dev/github.com/feymanlee/cacheit)
+[![License](https://img.shields.io/github/license/feymanlee/storeit)](./LICENSE)
+
 ## Tag List
 | Tag           | Value Type     | SQL Statment                        | DESC                   |
 |---------------|----------------|-------------------------------------|------------------------|

@@ -1,8 +1,6 @@
 module github.com/feymanlee/storeit
 
-go 1.21
-
-toolchain go1.23.8
+go 1.18
 
 require (
 	github.com/jinzhu/copier v0.3.5

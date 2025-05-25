@@ -40,9 +40,6 @@ func (r *GormStore[M]) SetTx(tx *gorm.DB) *GormStore[M] {
 	if tx == nil {
 		return r
 	}
-	if r.tx != nil {
-		return r
-	}
 	nr := r.onceClone()
 	nr.tx = tx
 	return nr
@@ -176,79 +173,6 @@ func (r *GormStore[M]) Exists(ctx context.Context, criteria *Criteria) (bool, er
 	}
 	// 移除这里的 r.reset() 调用，因为 Count 方法已经调用了
 	return count > 0, nil
-}
-
-// 修改 present 方法，解决并发安全问题
-func (r *GormStore[M]) present(ctx context.Context, criteria *Criteria) *gorm.DB {
-	var db *gorm.DB
-	if r.tx != nil {
-		db = r.tx.WithContext(ctx)
-	} else {
-		db = r.db.WithContext(ctx)
-	}
-
-	// 创建本地副本，避免修改原始对象
-	var localScopeClosures []gormClosure
-	if len(r.scopeClosures) > 0 {
-		localScopeClosures = append(localScopeClosures, r.scopeClosures...)
-	}
-
-	if len(r.hidden) > 0 {
-		db = db.Omit(r.hidden...)
-	}
-	if len(r.columns) > 0 {
-		db = db.Select(r.columns)
-	}
-	if r.unscoped {
-		db = db.Unscoped()
-	}
-	if criteria != nil {
-		if criteria.GetOffset() > 0 {
-			db = db.Offset(criteria.GetOffset())
-		}
-		// 有 offset 一定要有 limit
-		if criteria.limit > 0 || criteria.GetOffset() > 0 {
-			db = db.Limit(criteria.limit)
-		}
-		if criteria.group != "" {
-			db = db.Group(criteria.group)
-		}
-		for _, item := range criteria.orders {
-			db = db.Order(item)
-		}
-		// 使用本地副本而不是直接修改 r.scopeClosures
-		if len(criteria.scopeClosures) > 0 {
-			localScopeClosures = append(localScopeClosures, criteria.scopeClosures...)
-		}
-	}
-
-	// 使用本地副本
-	if len(localScopeClosures) > 0 {
-		for _, closure := range localScopeClosures {
-			db = closure(db)
-		}
-	}
-	return db
-}
-
-func (r *GormStore[M]) onceClone() *GormStore[M] {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	newStore := New[M](r.db)
-	if len(r.scopeClosures) > 0 {
-		newStore.scopeClosures = append(newStore.scopeClosures, r.scopeClosures...)
-	}
-	if len(r.hidden) > 0 {
-		newStore.hidden = append(newStore.hidden, r.hidden...)
-	}
-	if len(r.columns) > 0 {
-		newStore.columns = append(newStore.columns, r.columns...)
-	}
-	newStore.unscoped = r.unscoped
-	newStore.tx = r.tx
-
-	return newStore
 }
 
 func (r *GormStore[M]) Update(ctx context.Context, column string, value interface{}, criteria *Criteria) *gorm.DB {
@@ -422,6 +346,78 @@ func (r *GormStore[M]) AddPreload(name string, args ...any) *GormStore[M] {
 	})
 
 	return nr
+}
+
+func (r *GormStore[M]) present(ctx context.Context, criteria *Criteria) *gorm.DB {
+	var db *gorm.DB
+	if r.tx != nil {
+		db = r.tx.WithContext(ctx)
+	} else {
+		db = r.db.WithContext(ctx)
+	}
+
+	// 创建本地副本，避免修改原始对象
+	var localScopeClosures []gormClosure
+	if len(r.scopeClosures) > 0 {
+		localScopeClosures = append(localScopeClosures, r.scopeClosures...)
+	}
+
+	if len(r.hidden) > 0 {
+		db = db.Omit(r.hidden...)
+	}
+	if len(r.columns) > 0 {
+		db = db.Select(r.columns)
+	}
+	if r.unscoped {
+		db = db.Unscoped()
+	}
+	if criteria != nil {
+		if criteria.GetOffset() > 0 {
+			db = db.Offset(criteria.GetOffset())
+		}
+		// 有 offset 一定要有 limit
+		if criteria.limit > 0 || criteria.GetOffset() > 0 {
+			db = db.Limit(criteria.limit)
+		}
+		if criteria.group != "" {
+			db = db.Group(criteria.group)
+		}
+		for _, item := range criteria.orders {
+			db = db.Order(item)
+		}
+		// 使用本地副本而不是直接修改 r.scopeClosures
+		if len(criteria.scopeClosures) > 0 {
+			localScopeClosures = append(localScopeClosures, criteria.scopeClosures...)
+		}
+	}
+
+	// 使用本地副本
+	if len(localScopeClosures) > 0 {
+		for _, closure := range localScopeClosures {
+			db = closure(db)
+		}
+	}
+	return db
+}
+
+func (r *GormStore[M]) onceClone() *GormStore[M] {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	newStore := New[M](r.db)
+	if len(r.scopeClosures) > 0 {
+		newStore.scopeClosures = append(newStore.scopeClosures, r.scopeClosures...)
+	}
+	if len(r.hidden) > 0 {
+		newStore.hidden = append(newStore.hidden, r.hidden...)
+	}
+	if len(r.columns) > 0 {
+		newStore.columns = append(newStore.columns, r.columns...)
+	}
+	newStore.unscoped = r.unscoped
+	newStore.tx = r.tx
+
+	return newStore
 }
 
 func (r *GormStore[M]) reset() *GormStore[M] {

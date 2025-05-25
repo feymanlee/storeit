@@ -102,7 +102,7 @@ func UpdateUser(c *gin.Context) {
 	_ = c.ShouldBindJSON(&user)
 	id, _ := strconv.Atoi(c.Params.ByName("id"))
 	user.ID = int64(id)
-	storeit.New[User](db).Save(c, &user)
+	storeit.New[User](db).Save(c, user)
 	c.JSON(200, user)
 }
 

@@ -2,381 +2,804 @@ package storeit
 
 import (
 	"context"
-	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
-type User struct {
-	gorm.Model
-	Name             string  `gorm:"size:255"`
-	Age              int64   `gorm:"age"`
-	Gender           string  `gorm:"gender"`
-	Emails           []Email // One-To-Many (拥有多个 - Email表的UserID作外键)
-	Value            int
-	BillingAddress   Address // One-To-One (属于 - 本表的BillingAddressID作外键)
-	BillingAddressID int64
-}
-
-type Email struct {
-	gorm.Model
-	UserID     int    `gorm:"index"`                          // 外键 (属于), tag `index`是为该列创建索引
-	Email      string `gorm:"type:varchar(100);unique_index"` // `type`设置sql类型, `unique_index` 为该列设置唯一索引
-	Subscribed bool
+type TestModel struct {
+	ID        uint   `gorm:"primarykey,column:id"`
+	Name      string `gorm:"size:255,column:name"`
+	Age       int    `gorm:"size:3,column:age"`
+	Score     int    `gorm:"size:3,column:score"`
+	Email     string `gorm:"size:255,column:email"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt
 }
 
 type Address struct {
-	gorm.Model
-	Address1 string         `gorm:"not null;unique"` // 设置字段为非空并唯一
-	Address2 string         `gorm:"type:varchar(100);unique"`
-	Post     sql.NullString `gorm:"not null"`
+	ID     uint   `gorm:"primarykey,column:id"`
+	UserId uint   `gorm:"column:user_id"`
+	Street string `gorm:"column:street"`
 }
 
-func setupTestDB() *gorm.DB {
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
-	if err != nil {
-		panic("failed to connect database")
-	}
+type UserWithAddress struct {
+	TestModel
+	Addresses []Address `gorm:"foreignKey:UserId"`
+}
 
-	err = db.AutoMigrate(&User{}, &Email{}, &Address{})
-	if err != nil {
-		panic(err)
-	}
+type Department struct {
+	ID   uint   `gorm:"primarykey"`
+	Name string `gorm:"size:255"`
+}
+
+type Employee struct {
+	TestModel
+	DepartmentID uint       `gorm:"column:department_id"`
+	Department   Department `gorm:"foreignKey:DepartmentID"`
+}
+
+func (Employee) TableName() string {
+	return "employees"
+}
+
+func (UserWithAddress) TableName() string {
+	return "user_with_address"
+}
+
+// TableName 指定表名
+func (TestModel) TableName() string {
+	return "test_models"
+}
+
+func setupTestDB(t *testing.T) *gorm.DB {
+	// 使用共享内存数据库，避免多连接导致的表丢失
+	dbName := fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())
+
+	db, err := gorm.Open(sqlite.Open(dbName), &gorm.Config{
+		SkipDefaultTransaction:                   true,
+		Logger:                                   logger.Default.LogMode(logger.Info),
+		DisableForeignKeyConstraintWhenMigrating: true,
+	})
+	assert.NoError(t, err)
+
+	// 确保表结构正确
+	err = db.AutoMigrate(&TestModel{})
+	assert.NoError(t, err)
+
+	// 添加清理函数
+	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		if err == nil {
+			sqlDB.Close()
+		}
+	})
+
 	return db
 }
 
-func TestInsert(t *testing.T) {
-	db := setupTestDB()
-	defer clearTestData(db)
-	store := New[User](db)
-	model := &User{Name: "Test", Value: 123}
+func TestGormStore_Basic(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
 
-	tx := store.Insert(context.Background(), model)
-	assert.NoError(t, tx.Error)
-
-	var result User
-	err := db.First(&result, model.ID).Error
+	// Test Create
+	model := &TestModel{
+		Name:  "Test User",
+		Age:   25,
+		Email: "test@example.com",
+	}
+	err := store.Create(ctx, model).Error
 	assert.NoError(t, err)
-	assert.Equal(t, model.Name, result.Name)
-	assert.Equal(t, model.Value, result.Value)
-}
+	assert.NotZero(t, model.ID)
 
-func TestDelete(t *testing.T) {
-	db := setupTestDB()
-	defer clearTestData(db)
-	store := New[User](db)
-	model := &User{Name: "Test", Value: 123}
+	// Test FindByID
+	found, err := store.FindByID(ctx, model.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, model.Name, found.Name)
 
-	tx := store.Insert(context.Background(), model)
-	assert.NoError(t, tx.Error)
+	// Test Update
+	err = store.UpdateById(ctx, model.ID, "age", 26).Error
+	assert.NoError(t, err)
 
-	tx = store.Delete(context.Background(), model)
-	assert.NoError(t, tx.Error)
+	// Test First
+	criteria := NewCriteria().Where("age", 26)
+	updated, err := store.First(ctx, criteria)
+	assert.NoError(t, err)
+	assert.Equal(t, 26, updated.Age)
 
-	var result User
-	err := db.First(&result, model.ID).Error
+	// Test Delete
+	err = store.DeleteById(ctx, model.ID).Error
+	assert.NoError(t, err)
+
+	// Test Soft Delete
+	_, err = store.FindByID(ctx, model.ID)
 	assert.Error(t, err)
+
+	// Test Unscoped Find
+	found, err = store.Unscoped().FindByID(ctx, model.ID)
+	assert.NoError(t, err)
+	assert.NotNil(t, found.DeletedAt)
 }
 
-func TestFindByID(t *testing.T) {
-	db := setupTestDB()
-	defer clearTestData(db)
-	store := New[User](db)
-	model := &User{Name: "Test", Value: 123}
+func TestGormStore_BatchOperations(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
 
-	tx := store.Insert(context.Background(), model)
-	assert.NoError(t, tx.Error)
-
-	result, err := store.FindByID(context.Background(), model.ID)
+	// Test Creates
+	models := []TestModel{
+		{Name: "User 1", Age: 20},
+		{Name: "User 2", Age: 25},
+		{Name: "User 3", Age: 30},
+	}
+	err := store.Creates(ctx, models).Error
 	assert.NoError(t, err)
-	assert.Equal(t, model.Name, result.Name)
-	assert.Equal(t, model.Value, result.Value)
-	result, err = store.FindByID(context.Background(), 100)
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
-}
 
-func TestFindByIDs(t *testing.T) {
-	db := setupTestDB()
-	defer clearTestData(db)
-	store := New[User](db)
-	model1 := &User{Name: "Test 1", Value: 1}
-	model2 := &User{Name: "Test 2", Value: 2}
-
-	tx1 := store.Insert(context.Background(), model1)
-	assert.NoError(t, tx1.Error)
-	tx2 := store.Insert(context.Background(), model2)
-	assert.NoError(t, tx2.Error)
-
-	result, err := store.FindByIDs(context.Background(), []int64{int64(model1.ID), int64(model2.ID)})
+	// Test FindInBatches
+	var results []TestModel
+	batchSize := 2
+	err = store.FindInBatches(ctx, &results, batchSize, func(tx *gorm.DB, batch int) error {
+		assert.LessOrEqual(t, len(results), batchSize)
+		return nil
+	}, nil)
 	assert.NoError(t, err)
-	assert.Equal(t, len(result), 2)
-	result, err = store.FindByIDs(context.Background(), []int64{100, 300})
-	assert.NoError(t, err)
-	assert.Empty(t, result)
-}
 
-func TestUpdate(t *testing.T) {
-	db := setupTestDB()
-	defer clearTestData(db)
-	store := New[User](db)
-	model := &User{Name: "Test", Value: 123}
-
-	tx := store.Insert(context.Background(), model)
-	assert.NoError(t, tx.Error)
-	where := NewCriteria().Where("id=?", model.ID)
-	model.Name = "Updated Test"
-	model.Value = 456
-
-	tx = store.Update(context.Background(), "name", "Updated Test", where)
-	assert.NoError(t, tx.Error)
-	tx = store.Update(context.Background(), "value", 456, where)
-	assert.NoError(t, tx.Error)
-
-	result, err := store.FindByID(context.Background(), model.ID)
-	assert.NoError(t, err)
-	assert.Equal(t, model.Name, result.Name)
-	assert.Equal(t, model.Value, result.Value)
-}
-
-func TestAll(t *testing.T) {
-	db := setupTestDB()
-	defer clearTestData(db)
-	store := New[User](db)
-
-	model1 := &User{Name: "Test 1", Value: 1}
-	model2 := &User{Name: "Test 2", Value: 2}
-
-	store.Insert(context.Background(), model1)
-	store.Insert(context.Background(), model2)
-
-	results, err := store.All(context.Background())
-	assert.NoError(t, err)
-	assert.Equal(t, 2, len(results))
-}
-
-func TestFind(t *testing.T) {
-	db := setupTestDB()
-	defer clearTestData(db)
-	store := New[User](db)
-
-	model1 := &User{Name: "Test 1", Value: 1}
-	model2 := &User{Name: "Test 2", Value: 2}
-
-	store.Insert(context.Background(), model1)
-	store.Insert(context.Background(), model2)
-
-	criteria := NewCriteria().Where("value = ?", 1)
-	results, err := store.Find(context.Background(), criteria)
-	assert.NoError(t, err)
-	assert.Equal(t, 1, len(results))
-	assert.Equal(t, model1.Name, (results)[0].Name)
-	assert.Equal(t, model1.Value, (results)[0].Value)
-}
-
-func TestCount(t *testing.T) {
-	db := setupTestDB()
-	defer clearTestData(db)
-	store := New[User](db)
-
-	model1 := &User{Name: "Test 1", Value: 1}
-	model2 := &User{Name: "Test 2", Value: 2}
-
-	store.Insert(context.Background(), model1)
-	store.Insert(context.Background(), model2)
-
-	criteria := NewCriteria().Where("value = ?", 1)
-	count, err := store.Count(context.Background(), criteria)
-	assert.NoError(t, err)
-	assert.Equal(t, int64(1), count)
-}
-
-func TestPaginate(t *testing.T) {
-	db := setupTestDB()
-	defer clearTestData(db)
-	store := New[User](db)
-
-	criteria := NewCriteria().Page(1).PerPage(2).Order("nalue", false)
-	pagination, err := store.Paginate(context.Background(), criteria)
-	assert.Error(t, err)
-	assert.Nil(t, pagination)
-	model1 := &User{Name: "Test 1", Value: 1}
-	model2 := &User{Name: "Test 2", Value: 2}
-	model3 := &User{Name: "Test 3", Value: 3}
-
-	store.Insert(context.Background(), model1)
-	store.Insert(context.Background(), model2)
-	store.Insert(context.Background(), model3)
-
-	criteria = NewCriteria().Page(1).PerPage(2).Order("value", false)
-	pagination, err = store.Paginate(context.Background(), criteria)
+	// Test Paginate
+	criteria := NewCriteria().Page(1).PerPage(2)
+	pagination, err := store.Paginate(ctx, criteria)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(3), pagination.Total)
-	assert.Equal(t, 2, pagination.PerPage)
-	assert.Equal(t, 1, pagination.Page)
 	assert.Equal(t, 2, len(pagination.Items))
 }
 
-func clearTestData(db *gorm.DB) {
-	db.Where("1 = 1").Delete(&User{})
-	db.Where("1 = 1").Delete(&Email{})
-	db.Where("1 = 1").Delete(&Address{})
-}
+func TestGormStore_Aggregations(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
 
-func TestGormStore_Hidden(t *testing.T) {
-	db := setupTestDB()
-	defer clearTestData(db)
-	users := getTestUsers()
-	store := New[User](db)
-	store.Creates(context.Background(), users)
-	first, err := store.Hidden([]string{"name", "updated_at"}).First(context.Background(), nil)
+	// Prepare data
+	models := []TestModel{
+		{Name: "User 1", Age: 20},
+		{Name: "User 2", Age: 25},
+		{Name: "User 3", Age: 30},
+	}
+	err := store.Creates(ctx, models).Error
 	assert.NoError(t, err)
-	assert.Empty(t, first.Name)
-	assert.Empty(t, first.UpdatedAt)
-}
 
-func TestGormStore_Creates(t *testing.T) {
-	db := setupTestDB()
-	defer clearTestData(db)
-	users := getTestUsers()
-	store := New[User](db)
-	tx := store.Creates(context.Background(), users)
-	assert.NoError(t, tx.Error)
-	assert.Equal(t, tx.RowsAffected, int64(len(users)))
-	assert.Equal(t, time.Now().Year(), users[0].CreatedAt.Year())
-	assert.Equal(t, time.Now().Year(), users[0].UpdatedAt.Year())
-	assert.True(t, users[0].ID != 0)
-}
+	// Test Count
+	count, err := store.Count(ctx, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(3), count)
 
-func TestGormStore_CreateInBatches(t *testing.T) {
-	db := setupTestDB()
-	defer clearTestData(db)
-	users := getTestUsers()
-	store := New[User](db)
-	tx := store.CreateInBatches(context.Background(), users, 2)
-	assert.NoError(t, tx.Error)
-	assert.Equal(t, tx.RowsAffected, int64(len(users)))
-	assert.Equal(t, time.Now().Year(), users[0].CreatedAt.Year())
-	assert.Equal(t, time.Now().Year(), users[0].UpdatedAt.Year())
-	assert.True(t, users[0].ID != 0)
-}
+	// Test Exists
+	exists, err := store.Exists(ctx, NewCriteria().WhereGt("age", 25))
+	assert.NoError(t, err)
+	assert.True(t, exists)
 
-func getTestUsers() []User {
-	return []User{
-		{
-			Name:   "John Doe",
-			Age:    30,
-			Gender: "male",
-			Value:  1000,
-		},
-		{
-			Name:   "Jane Doe",
-			Age:    28,
-			Gender: "female",
-			Value:  2000,
-		},
-		{
-			Name:   "Alice",
-			Age:    25,
-			Gender: "female",
-			Value:  1500,
-		},
-		{
-			Name:   "Bob",
-			Age:    32,
-			Gender: "male",
-			Value:  1200,
-		},
-		{
-			Name:   "Charlie",
-			Age:    22,
-			Gender: "male",
-			Value:  900,
-		},
-	}
-}
+	// Test Sum
+	sum, err := store.Sum(ctx, "age", nil)
+	assert.NoError(t, err)
+	assert.Equal(t, float64(75), sum)
 
-func getEmails() []Email {
-	return []Email{
-		{UserID: 1, Email: "user1@example.com", Subscribed: true},
-		{UserID: 2, Email: "user2@example.com", Subscribed: false},
-		{UserID: 3, Email: "user3@example.com", Subscribed: true},
-		{UserID: 4, Email: "user4@example.com", Subscribed: false},
-		{UserID: 5, Email: "user5@example.com", Subscribed: true},
-	}
+	// Test Avg
+	avg, err := store.Avg(ctx, "age", nil)
+	assert.NoError(t, err)
+	assert.Equal(t, float64(25), avg)
 }
 
 func TestGormStore_Columns(t *testing.T) {
-	db := setupTestDB()
-	defer clearTestData(db)
-	users := getTestUsers()
-	store := New[User](db)
-	store.Creates(context.Background(), users)
-	first, err := store.Columns([]string{"name", "updated_at"}).First(context.Background(), nil)
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	model := &TestModel{
+		Name:  "Test User",
+		Age:   25,
+		Email: "test@example.com",
+	}
+	err := store.Create(ctx, model).Error
 	assert.NoError(t, err)
-	assert.Empty(t, first.CreatedAt)
-	assert.Empty(t, first.Value)
+
+	// Test Select Columns
+	store = store.Columns([]string{"name", "age"})
+	found, err := store.FindByID(ctx, model.ID)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, found.Name)
+	assert.NotZero(t, found.Age)
+	assert.Empty(t, found.Email)
+
+	// Test Hidden Columns
+	store = New[TestModel](db).Hidden([]string{"email"})
+	found, err = store.FindByID(ctx, model.ID)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, found.Name)
+	assert.NotZero(t, found.Age)
+	assert.Empty(t, found.Email)
 }
 
-func TestGormStore_Deletes(t *testing.T) {
-	db := setupTestDB()
-	defer clearTestData(db)
-	emails := getEmails()
-	store := New[Email](db)
-	store.Creates(context.Background(), emails)
-	c := NewCriteria().Where("email = ?", "user5@example.com")
-	tx := store.Deletes(context.Background(), c)
-	assert.NoError(t, tx.Error)
-	assert.Equal(t, int64(1), tx.RowsAffected)
+func TestGormStore_SetTx(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+
+	// 测试设置事务
+	tx := db.Begin()
+	txStore := store.SetTx(tx)
+	assert.NotNil(t, txStore)
+
+	// 测试重复设置事务
+	txStore2 := txStore.SetTx(tx)
+	assert.Equal(t, txStore, txStore2)
+
+	tx.Rollback()
 }
 
-func TestGormStore_DeleteById(t *testing.T) {
-	db := setupTestDB()
-	defer clearTestData(db)
-	users := getTestUsers()
-	store := New[User](db)
-	store.Creates(context.Background(), users)
-	first, err := store.First(context.Background(), nil)
+func TestGormStore_Transaction(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 测试事务回滚
+	tx := db.Begin()
+	txStore := store.SetTx(tx)
+
+	model := &TestModel{
+		Name: "Transaction Test",
+		Age:  30,
+	}
+
+	err := txStore.Create(ctx, model).Error
 	assert.NoError(t, err)
-	tx := store.DeleteById(context.Background(), first.ID)
-	assert.NoError(t, tx.Error)
-	assert.Equal(t, tx.RowsAffected, int64(1))
-	res, err := store.FindByID(context.Background(), first.ID)
-	assert.Nil(t, res)
-	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+
+	tx.Rollback()
+
+	// 验证数据已回滚
+	count, err := store.Count(ctx, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), count)
 }
 
-func TestGormStore_Updates(t *testing.T) {
-	db := setupTestDB()
-	defer clearTestData(db)
-	users := getTestUsers()
-	store := New[User](db)
-	store.Creates(context.Background(), users)
-	first, err := store.First(context.Background(), nil)
+func TestGormStore_Clone(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+
+	// 测试克隆
+	store1 := store.Columns([]string{"name"})
+	store2 := store.Hidden([]string{"email"})
+
+	assert.NotEqual(t, store1.columns, store2.columns)
+	assert.NotEqual(t, store1.hidden, store2.hidden)
+}
+
+func TestGormStore_FindByIDs(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 准备测试数据
+	models := []TestModel{
+		{Name: "User 1", Age: 20},
+		{Name: "User 2", Age: 25},
+		{Name: "User 3", Age: 30},
+	}
+	err := store.Creates(ctx, models).Error
 	assert.NoError(t, err)
-	c := NewCriteria().Where("id=?", first.ID)
-	tx := store.Updates(context.Background(), map[string]any{"name": "nameupdated"}, c)
-	assert.NoError(t, tx.Error)
-	assert.Equal(t, tx.RowsAffected, int64(1))
-	res, err := store.FindByID(context.Background(), first.ID)
+
+	// 测试空ID列表
+	_, err = store.FindByIDs(ctx, []int64{})
+	assert.Error(t, err)
+
+	// 测试正常查询
+	var ids []int64
+	for _, m := range models {
+		ids = append(ids, int64(m.ID))
+	}
+	found, err := store.FindByIDs(ctx, ids)
 	assert.NoError(t, err)
-	assert.Equal(t, res.Name, "nameupdated")
+	assert.Equal(t, len(models), len(found))
+}
+
+func TestGormStore_Pluck(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 准备测试数据
+	models := []TestModel{
+		{Name: "User 1", Age: 20},
+		{Name: "User 2", Age: 25},
+		{Name: "User 3", Age: 30},
+	}
+	err := store.Creates(ctx, models).Error
+	assert.NoError(t, err)
+
+	// 测试 Pluck
+	var names []string
+	err = store.Pluck(ctx, "name", &names, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, len(models), len(names))
+	assert.Contains(t, names, "User 1")
+}
+
+func TestGormStore_Scan(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 准备测试数据
+	models := []TestModel{
+		{Name: "User 1", Age: 20},
+		{Name: "User 2", Age: 25},
+	}
+	err := store.Creates(ctx, models).Error
+	assert.NoError(t, err)
+
+	// 测试 Scan
+	type Result struct {
+		Name string
+		Age  int
+	}
+	var results []Result
+	err = store.Scan(ctx, nil, &results)
+	assert.NoError(t, err)
+	assert.Equal(t, len(models), len(results))
+}
+
+func TestGormStore_WithTrashed(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 创建并软删除记录
+	model := &TestModel{
+		Name: "Deleted User",
+		Age:  25,
+	}
+	err := store.Create(ctx, model).Error
+	assert.NoError(t, err)
+
+	err = store.DeleteById(ctx, model.ID).Error
+	assert.NoError(t, err)
+
+	// 测试 WithTrashed
+	found, err := store.WithTrashed(true).FindByID(ctx, model.ID)
+	assert.NoError(t, err)
+	assert.NotNil(t, found)
+	assert.NotNil(t, found.DeletedAt)
+}
+
+func TestGormStore_CreateInBatches(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 准备大量测试数据
+	var models []TestModel
+	for i := 0; i < 100; i++ {
+		models = append(models, TestModel{
+			Name: fmt.Sprintf("User %d", i),
+			Age:  20 + i%30,
+		})
+	}
+
+	// 测试批量创建
+	err := store.CreateInBatches(ctx, models, 10).Error
+	assert.NoError(t, err)
+
+	// 验证数据
+	count, err := store.Count(ctx, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(100), count)
 }
 
 func TestGormStore_Save(t *testing.T) {
-	db := setupTestDB()
-	defer clearTestData(db)
-	store := New[User](db)
-	user := User{
-		Name:   "Charlie",
-		Age:    22,
-		Gender: "male",
-		Value:  900,
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 测试创建
+	model := TestModel{
+		Name: "Save Test",
+		Age:  25,
 	}
-	store.Save(context.Background(), &user)
+	err := store.Create(ctx, &model).Error
+	assert.NoError(t, err)
+
+	// 测试更新
+	model.Age = 26
+	err = store.Save(ctx, model).Error
+	assert.NoError(t, err)
+
+	// 验证更新
+	found, err := store.FindByID(ctx, model.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, 26, found.Age)
+}
+
+func TestGormStore_Updates(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 准备测试数据
+	models := []TestModel{
+		{Name: "User 1", Age: 20, Email: "user1@test.com"},
+		{Name: "User 2", Age: 25, Email: "user2@test.com"},
+	}
+	err := store.Creates(ctx, models).Error
+	assert.NoError(t, err)
+
+	// 测试批量更新
+	criteria := NewCriteria().Where("age < ?", 25)
+	updates := map[string]interface{}{
+		"age":   30,
+		"email": "updated@test.com",
+	}
+	err = store.Updates(ctx, updates, criteria).Error
+	assert.NoError(t, err)
+
+	// 验证更新结果
+	updated, err := store.First(ctx, NewCriteria().Where("age = ?", 30))
+	assert.NoError(t, err)
+	assert.Equal(t, "updated@test.com", updated.Email)
+}
+
+func TestGormStore_All(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 准备测试数据
+	models := []TestModel{
+		{Name: "User 1", Age: 20},
+		{Name: "User 2", Age: 25},
+	}
+	err := store.Creates(ctx, models).Error
+	assert.NoError(t, err)
+
+	// 测试获取所有记录
+	all, err := store.All(ctx)
+	assert.NoError(t, err)
+	assert.Equal(t, len(models), len(all))
+}
+
+func TestGormStore_Find(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 准备测试数据
+	models := []TestModel{
+		{Name: "User 1", Age: 20},
+		{Name: "User 2", Age: 25},
+		{Name: "User 3", Age: 30},
+	}
+	err := store.Creates(ctx, models).Error
+	assert.NoError(t, err)
+
+	// 测试复杂查询条件
+	criteria := NewCriteria().
+		Where("age >= ?", 20).
+		Where("age <= ?", 25).
+		OrderDesc("age").
+		Limit(2)
+
+	found, err := store.Find(ctx, criteria)
+	assert.NoError(t, err)
+	assert.Equal(t, 2, len(found))
+	assert.Equal(t, 25, found[0].Age)
+}
+
+func TestGormStore_ScopeClosure(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 准备测试数据
+	models := []TestModel{
+		{Name: "User 1", Age: 20},
+		{Name: "User 2", Age: 25},
+	}
+	err := store.Creates(ctx, models).Error
+	assert.NoError(t, err)
+
+	// 测试自定义作用域
+	store = store.ScopeClosure(func(tx *gorm.DB) *gorm.DB {
+		return tx.Where("age > ?", 20)
+	})
+
+	found, err := store.Find(ctx, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(found))
+	assert.Equal(t, 25, found[0].Age)
+}
+
+func TestGormStore_AddPreload(t *testing.T) {
+
+	db := setupTestDB(t)
+	err := db.AutoMigrate(&Address{})
+	assert.NoError(t, err)
+	err = db.AutoMigrate(&UserWithAddress{})
+	assert.NoError(t, err)
+	store := New[UserWithAddress](db)
+	ctx := context.Background()
+
+	// 创建测试数据
+	user := &UserWithAddress{
+		TestModel: TestModel{
+			Name: "User with Address",
+			Age:  25,
+		},
+		Addresses: []Address{
+			{Street: "Street 1"},
+			{Street: "Street 2"},
+		},
+	}
+	err = store.Create(ctx, user).Error
+	assert.NoError(t, err)
+
+	// 测试预加载
+	store = store.AddPreload("Addresses")
+	found, err := store.FindByID(ctx, user.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, 2, len(found.Addresses))
+}
+
+func TestGormStore_Emit(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	model := &TestModel{
+		Name:  "Test User",
+		Age:   25,
+		Email: "test@example.com",
+	}
+	err := store.Create(ctx, model).Error
+	assert.NoError(t, err)
+
+	// 测试 Emit (等同于 Hidden)
+	store = store.Emit([]string{"email", "age"})
+	found, err := store.FindByID(ctx, model.ID)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, found.Name)
+	assert.Zero(t, found.Age)
+	assert.Empty(t, found.Email)
+}
+
+func TestGormStore_Reset(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+
+	// 添加一些设置
+	store = store.
+		Columns([]string{"name"}).
+		Hidden([]string{"email"}).
+		ScopeClosure(func(tx *gorm.DB) *gorm.DB {
+			return tx.Where("age > ?", 20)
+		})
+
+	// 测试重置
+	store = store.reset()
+	assert.Empty(t, store.columns)
+	assert.Empty(t, store.hidden)
+	assert.Empty(t, store.scopeClosures)
+	assert.False(t, store.unscoped)
+	assert.Nil(t, store.tx)
+}
+
+func TestGormStore_Present(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 测试各种条件组合
+	criteria := NewCriteria().
+		Page(2).
+		PerPage(10).
+		Order("name", false).
+		Group("age").
+		WhereGt("age", 20)
+
+	tx := store.present(ctx, criteria)
+	assert.NotNil(t, tx)
+}
+
+func TestGormStore_ErrorHandling(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 测试查询不存在的记录
+	_, err := store.FindByID(ctx, 999)
+	assert.Error(t, err)
+	assert.Equal(t, gorm.ErrRecordNotFound, err)
+
+	// 测试无效的列名
+	err = store.Update(ctx, "invalid_column", "value", nil).Error
+	assert.Error(t, err)
+
+	// 测试无效的聚合字段
+	_, err = store.Sum(ctx, "invalid_column", nil)
+	assert.Error(t, err)
+
+	// 测试无效的排序字段
+	criteria := NewCriteria().Order("invalid_column", false)
+	_, err = store.Find(ctx, criteria)
+	assert.Error(t, err)
+}
+
+func TestGormStore_Deletes(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 准备测试数据
+	models := []TestModel{
+		{Name: "User 1", Age: 20},
+		{Name: "User 2", Age: 25},
+		{Name: "User 3", Age: 30},
+	}
+	err := store.Creates(ctx, models).Error
+	assert.NoError(t, err)
+
+	// 测试批量删除
+	criteria := NewCriteria().WhereLt("age", 26)
+	err = store.Deletes(ctx, criteria).Error
+	assert.NoError(t, err)
+
+	// 验证删除结果
+	count, err := store.Count(ctx, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), count)
+
+	// 测试 WithTrashed 查询被删除的记录
+	count, err = store.WithTrashed(true).Count(ctx, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(3), count)
+}
+
+func TestGormStore_Transaction_Commit(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 开始事务
+	tx := db.Begin()
+	txStore := store.SetTx(tx)
+
+	// 在事务中执行操作
+	model := &TestModel{
+		Name: "Transaction Commit Test",
+		Age:  30,
+	}
+	err := txStore.Create(ctx, model).Error
+	assert.NoError(t, err)
+
+	// 提交事务
+	tx.Commit()
+
+	// 验证数据已提交
+	found, err := store.FindByID(ctx, model.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, model.Name, found.Name)
+}
+
+func TestGormStore_ComplexQueries(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 准备测试数据
+	models := []TestModel{
+		{Name: "User 1", Age: 20, Email: "user1@test.com"},
+		{Name: "User 2", Age: 25, Email: "user2@test.com"},
+		{Name: "User 3", Age: 30, Email: "user3@test.com"},
+	}
+	err := store.Creates(ctx, models).Error
+	assert.NoError(t, err)
+
+	// 测试组合条件查询
+	criteria := NewCriteria().
+		WhereGte("age", 20).
+		WhereLte("age", 30).
+		OrderDesc("age").
+		Group("age").
+		Having("COUNT(*) > ?", 0)
+
+	found, err := store.Find(ctx, criteria)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, found)
+
+	// 测试 OR 条件
+	criteria = NewCriteria().
+		Where("age", 20).
+		OrWhere("age", 30)
+
+	found, err = store.Find(ctx, criteria)
+	assert.NoError(t, err)
+	assert.Equal(t, 2, len(found))
+}
+
+func TestGormStore_Joins(t *testing.T) {
+
+	db := setupTestDB(t)
+
+	// 清理之前可能存在的表
+	err := db.Migrator().DropTable(&Employee{}, &Department{})
+	assert.NoError(t, err)
+
+	err = db.AutoMigrate(&Department{}, &Employee{})
+	assert.NoError(t, err)
+
+	store := New[Employee](db)
+	ctx := context.Background()
+
+	// 创建测试数据
+	dept := Department{Name: "IT"}
+	err = db.Create(&dept).Error
+	assert.NoError(t, err)
+
+	employee := &Employee{
+		TestModel: TestModel{
+			Name: "Join Test",
+			Age:  25,
+		},
+		DepartmentID: dept.ID,
+	}
+	err = store.Create(ctx, employee).Error
+	assert.NoError(t, err)
+
+	// 测试 Joins
+	found, err := store.First(ctx, NewCriteria().Joins("LEFT JOIN departments ON departments.id = employees.department_id").Where("departments.name = ?", "IT"))
+	assert.NoError(t, err)
+	assert.Equal(t, employee.ID, found.ID)
+	// 测试结束后清理表
+	err = db.Migrator().DropTable(&Employee{}, &Department{})
+	assert.NoError(t, err)
+}
+
+func TestGormStore_Pagination_EdgeCases(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 准备测试数据
+	var models []TestModel
+	for i := 0; i < 15; i++ {
+		models = append(models, TestModel{
+			Name: fmt.Sprintf("User %d", i),
+			Age:  20 + i,
+		})
+	}
+	err := store.Creates(ctx, models).Error
+	assert.NoError(t, err)
+
+	// 测试第一页
+	pagination, err := store.Paginate(ctx, NewCriteria().Page(1).PerPage(5))
+	assert.NoError(t, err)
+	assert.Equal(t, 5, len(pagination.Items))
+	assert.Equal(t, int64(15), pagination.Total)
+
+	// 测试最后一页
+	pagination, err = store.Paginate(ctx, NewCriteria().Page(3).PerPage(5))
+	assert.NoError(t, err)
+	assert.Equal(t, 5, len(pagination.Items))
+
+	// 测试超出范围的页码
+	pagination, err = store.Paginate(ctx, NewCriteria().Page(4).PerPage(5))
+	assert.NoError(t, err)
+	assert.Empty(t, pagination.Items)
+
+	// 测试每页大小为0
+	pagination, err = store.Paginate(ctx, NewCriteria().Page(1).PerPage(0))
+	assert.NoError(t, err)
+	assert.Equal(t, int64(15), pagination.Total)
+	assert.Equal(t, 15, len(pagination.Items))
 }

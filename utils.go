@@ -1,13 +1,9 @@
 package storeit
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
-	"reflect"
-	"strconv"
 	"strings"
-	"time"
+	"sync"
 )
 
 var mysqlReservedWords = []string{
@@ -44,134 +40,55 @@ var mysqlReservedWords = []string{
 	"TRUE", "UNDO", "UNION", "UNIQUE", "UNLOCK", "UNSIGNED", "UPDATE", "USAGE",
 	"USE", "USING", "UTC_DATE", "UTC_TIME", "UTC_TIMESTAMP", "VALUES", "VARBINARY",
 	"VARCHAR", "VARCHARACTER", "VARYING", "WHEN", "WHERE", "WHILE", "WITH",
-	"WRITE", "XOR", "YEAR_MONTH", "ZEROFILL", "RANK",
+	"WRITE", "XOR", "YEAR_MONTH", "ZEROFILL", "RANK", "OFFSET",
 }
 
-func AnyToString(val any) (str string, err error) {
-	if val == nil {
-		return
-	}
+// 使用 map 存储保留字，提高查找效率
+var (
+	reservedWordsMap     map[string]bool
+	reservedWordsMapOnce sync.Once
+)
 
-	switch value := val.(type) {
-	case int:
-		str = strconv.Itoa(value)
-	case int8:
-		str = strconv.Itoa(int(value))
-	case int16:
-		str = strconv.Itoa(int(value))
-	case int32: // same as `rune`
-		str = strconv.Itoa(int(value))
-	case int64:
-		str = strconv.FormatInt(value, 10)
-	case uint:
-		str = strconv.FormatUint(uint64(value), 10)
-	case uint8:
-		str = strconv.FormatUint(uint64(value), 10)
-	case uint16:
-		str = strconv.FormatUint(uint64(value), 10)
-	case uint32:
-		str = strconv.FormatUint(uint64(value), 10)
-	case uint64:
-		str = strconv.FormatUint(value, 10)
-	case float32:
-		str = strconv.FormatFloat(float64(value), 'f', -1, 32)
-	case float64:
-		str = strconv.FormatFloat(value, 'f', -1, 64)
-	case bool:
-		str = strconv.FormatBool(value)
-	case string:
-		str = value
-	case []byte:
-		str = string(value)
-	case time.Duration:
-		str = value.String()
-	case json.Number:
-		str = value.String()
-	default:
-		err = errors.New("convert value type error")
-	}
-	return
-}
-
-func AnyToInt(in any) (iVal int, err error) {
-	switch tVal := in.(type) {
-	case nil:
-		iVal = 0
-	case int:
-		iVal = tVal
-	case int8:
-		iVal = int(tVal)
-	case int16:
-		iVal = int(tVal)
-	case int32:
-		iVal = int(tVal)
-	case int64:
-		iVal = int(tVal)
-	case uint:
-		iVal = int(tVal)
-	case uint8:
-		iVal = int(tVal)
-	case uint16:
-		iVal = int(tVal)
-	case uint32:
-		iVal = int(tVal)
-	case uint64:
-		iVal = int(tVal)
-	case float32:
-		iVal = int(tVal)
-	case float64:
-		iVal = int(tVal)
-	case time.Duration:
-		iVal = int(tVal)
-	case string:
-		iVal, err = strconv.Atoi(strings.TrimSpace(tVal))
-	case json.Number:
-		var i64 int64
-		i64, err = tVal.Int64()
-		iVal = int(i64)
-	default:
-		err = errors.New("convert value type error")
-	}
-	return
-}
-
-func IsEmpty(val any) bool {
-	if val == nil {
-		return true
-	}
-	v := reflect.ValueOf(val)
-	switch v.Kind() {
-	case reflect.Invalid:
-		return true
-	case reflect.String, reflect.Array:
-		return v.Len() == 0
-	case reflect.Map, reflect.Slice:
-		return v.Len() == 0 || v.IsNil()
-	case reflect.Bool:
-		return !v.Bool()
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return v.Int() == 0
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return v.Uint() == 0
-	case reflect.Float32, reflect.Float64:
-		return v.Float() == 0
-	case reflect.Interface, reflect.Ptr, reflect.Func:
-		return v.IsNil()
-	}
-
-	return reflect.DeepEqual(v.Interface(), reflect.Zero(v.Type()).Interface())
-}
-
-func IsMySQLReservedWord(word string) bool {
-	for _, reservedWord := range mysqlReservedWords {
-		if strings.EqualFold(word, reservedWord) {
-			return true
+// 初始化保留字 map
+func initReservedWordsMap() {
+	reservedWordsMapOnce.Do(func() {
+		reservedWordsMap = make(map[string]bool, len(mysqlReservedWords))
+		for _, word := range mysqlReservedWords {
+			reservedWordsMap[strings.ToUpper(word)] = true
 		}
-	}
-	return false
+	})
 }
 
+// IsMySQLReservedWord 检查一个词是否是 MySQL 保留字
+func IsMySQLReservedWord(word string) bool {
+	initReservedWordsMap()
+	return reservedWordsMap[strings.ToUpper(word)]
+}
+
+// QuoteReservedWord 如果是保留字，则用反引号包裹
 func QuoteReservedWord(word string) string {
+	// 处理空字符串
+	if word == "" {
+		return word
+	}
+
+	// 如果已经被引号包裹，则直接返回
+	if strings.HasPrefix(word, "`") && strings.HasSuffix(word, "`") {
+		return word
+	}
+
+	// 处理表名.列名的情况
+	if strings.Contains(word, ".") {
+		parts := strings.Split(word, ".")
+		for i, part := range parts {
+			if part != "" && IsMySQLReservedWord(part) {
+				parts[i] = fmt.Sprintf("`%s`", part)
+			}
+		}
+		return strings.Join(parts, ".")
+	}
+
+	// 处理普通字段名
 	if IsMySQLReservedWord(word) {
 		return fmt.Sprintf("`%s`", word)
 	}

@@ -6,7 +6,9 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/spf13/cast"
 	"golang.org/x/exp/slices"
+	"gorm.io/gorm"
 )
 
 const (
@@ -21,34 +23,19 @@ const (
 )
 
 type conditionSpec struct {
-	query any
+	query string
 	args  []any
 }
 
 type groupConditionSpec []conditionSpec
 
-type joinSpec struct {
-	query string
-	args  []any
-}
-type havingSpec struct {
-	query any
-	args  []any
-}
-
 type Criteria struct {
-	whereConditions   []conditionSpec
-	groupOrConditions []groupConditionSpec
-	orConditions      []conditionSpec
-	notConditions     []conditionSpec
-	havingConditions  []havingSpec
-	joinConditions    []joinSpec
-	orders            []string
-	preloads          []preloadEntry
-	limit             int
-	offset            int
-	group             string
-	page              int
+	scopeClosures []gormClosure
+	orders        []string
+	limit         int
+	offset        int
+	group         string
+	page          int
 }
 
 var conditionMapping = map[string]string{
@@ -67,17 +54,31 @@ func NewCriteria() *Criteria {
 	return &Criteria{}
 }
 
-// ExtractCriteria 从结构体导出 Criteria
 func ExtractCriteria(source any) (*Criteria, error) {
 	if source == nil {
 		return nil, errors.New("empty source")
 	}
-	t := reflect.TypeOf(source)
+
+	v := reflect.ValueOf(source)
+	// 处理指针类型
+	if v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return nil, errors.New("nil pointer source")
+		}
+		v = v.Elem()
+	}
+
+	t := v.Type()
 	if t.Kind() != reflect.Struct {
 		return nil, errors.New("extract source type must be a Struct")
 	}
-	v := reflect.ValueOf(source)
-	var criteria = Criteria{}
+
+	// 预分配容量，减少内存分配
+	var criteria = Criteria{
+		scopeClosures: make([]gormClosure, 0, t.NumField()),
+		orders:        make([]string, 0, t.NumField()),
+	}
+
 	for i := 0; i < v.NumField(); i++ {
 		sf := t.Field(i)
 		// if field value is zero value skip
@@ -98,31 +99,31 @@ func ExtractCriteria(source any) (*Criteria, error) {
 		// 处理分页和 order
 		switch criteriaOperator {
 		case criteriaPerPage:
-			value, err := AnyToInt(fieldValue)
+			value, err := cast.ToIntE(fieldValue)
 			if err != nil {
 				return nil, err
 			}
 			criteria.PerPage(value)
 		case criteriaPage:
-			value, err := AnyToInt(fieldValue)
+			value, err := cast.ToIntE(fieldValue)
 			if err != nil {
 				return nil, err
 			}
 			criteria.Page(value)
 		case criteriaOffset:
-			value, err := AnyToInt(fieldValue)
+			value, err := cast.ToIntE(fieldValue)
 			if err != nil {
 				return nil, err
 			}
 			criteria.Offset(value)
 		case criteriaLimit:
-			value, err := AnyToInt(fieldValue)
+			value, err := cast.ToIntE(fieldValue)
 			if err != nil {
 				return nil, err
 			}
 			criteria.Limit(value)
 		case criteriaSort:
-			value, err := AnyToString(fieldValue)
+			value, err := cast.ToStringE(fieldValue)
 			if err != nil {
 				return nil, err
 			}
@@ -139,7 +140,7 @@ func ExtractCriteria(source any) (*Criteria, error) {
 				if err != nil {
 					return nil, err
 				}
-				if wc.query != nil {
+				if wc.query != "" {
 					groupSpec = append(groupSpec, wc)
 				}
 			}
@@ -151,7 +152,7 @@ func ExtractCriteria(source any) (*Criteria, error) {
 			if err != nil {
 				return nil, err
 			}
-			if wc.query != nil {
+			if wc.query != "" {
 				criteria.Where(wc.query, wc.args...)
 			}
 		}
@@ -160,40 +161,121 @@ func ExtractCriteria(source any) (*Criteria, error) {
 }
 
 func (c *Criteria) Where(query any, values ...any) *Criteria {
-	c.whereConditions = append(c.whereConditions, conditionSpec{query: query, args: values})
+	c.scopeClosures = append(c.scopeClosures, func(tx *gorm.DB) *gorm.DB {
+		return tx.Where(query, values...)
+	})
+	return c
+}
+
+func (c *Criteria) WhereGt(field string, value any) *Criteria {
+	field = QuoteReservedWord(field)
+	return c.Where(field+" > ?", value)
+}
+
+func (c *Criteria) WhereGte(field string, value any) *Criteria {
+	field = QuoteReservedWord(field)
+	return c.Where(field+" >= ?", value)
+}
+
+func (c *Criteria) WhereLte(field string, value any) *Criteria {
+	field = QuoteReservedWord(field)
+	return c.Where(field+" <= ?", value)
+}
+
+func (c *Criteria) WhereLt(field string, value any) *Criteria {
+	field = QuoteReservedWord(field)
+	return c.Where(field+" < ?", value)
+}
+
+// 优化 buildConditionSpec 方法，使用 QuoteReservedWord 保护字段名
+func (c *Criteria) buildConditionSpec(criteriaOperator string, field string, fieldValue any) (cond conditionSpec, err error) {
+	field = QuoteReservedWord(field)
+	cond = conditionSpec{}
+	if operator, ok := conditionMapping[criteriaOperator]; ok {
+		cond.query = fmt.Sprintf("%s %s ?", field, operator)
+		cond.args = []any{fieldValue}
+	} else if slices.Contains(valueStringOperator, criteriaOperator) {
+		var value string
+		value, err = cast.ToStringE(fieldValue)
+		if err != nil {
+			return
+		}
+		cond = buildLikeCondition(field, value, criteriaOperator)
+	}
+	return
+}
+
+// 添加一个辅助函数，用于构建 LIKE 条件，减少代码重复
+func buildLikeCondition(field, value, likeType string) (cond conditionSpec) {
+	field = QuoteReservedWord(field)
+	cond.query = fmt.Sprintf("%s like ?", field)
+
+	switch likeType {
+	case criteriaLike:
+		cond.args = []any{"%" + value + "%"}
+	case criteriaLLike:
+		cond.args = []any{"%" + value}
+	case criteriaRLike:
+		cond.args = []any{value + "%"}
+	}
+
+	return cond
+}
+
+func (c *Criteria) GroupOr(group groupConditionSpec) *Criteria {
+	if len(group) == 0 {
+		return c // 如果组为空，直接返回
+	}
+
+	c.scopeClosures = append(c.scopeClosures, func(tx *gorm.DB) *gorm.DB {
+		sub := tx.Session(&gorm.Session{NewDB: true})
+		for _, cond := range group {
+			sub = sub.Or(cond.query, cond.args...)
+		}
+		return tx.Where(sub)
+	})
 	return c
 }
 
 func (c *Criteria) WhereNot(query any, values ...any) *Criteria {
-	c.notConditions = append(c.notConditions, conditionSpec{query: query, args: values})
+	c.scopeClosures = append(c.scopeClosures, func(tx *gorm.DB) *gorm.DB {
+		return tx.Not(query, values...)
+	})
 	return c
 }
 
 func (c *Criteria) WhereIsNull(field string) *Criteria {
+	field = QuoteReservedWord(field)
 	return c.Where(field + " IS NULL")
 }
 
 func (c *Criteria) WhereNotNull(field string) *Criteria {
+	field = QuoteReservedWord(field)
 	return c.Where(field + " IS NOT NULL")
 }
 
 func (c *Criteria) WhereIn(field string, values any) *Criteria {
+	field = QuoteReservedWord(field)
 	return c.Where(field+" IN ?", values)
 }
 
 func (c *Criteria) WhereNotIn(field string, values any) *Criteria {
+	field = QuoteReservedWord(field)
 	return c.Where(field+" NOT IN ?", values)
 }
 
 func (c *Criteria) WhereStartWith(field string, value string) *Criteria {
+	field = QuoteReservedWord(field)
 	return c.Where(field+" LIKE ?", value+"%")
 }
 
 func (c *Criteria) WhereEndWith(field string, value string) *Criteria {
+	field = QuoteReservedWord(field)
 	return c.Where(field+" LIKE ?", "%"+value)
 }
 
 func (c *Criteria) WhereContains(field string, value string) *Criteria {
+	field = QuoteReservedWord(field)
 	return c.Where(field+" LIKE ?", "%"+value+"%")
 }
 
@@ -201,13 +283,10 @@ func (c *Criteria) WhereBetween(field string, start, end any) *Criteria {
 	return c.Where(field+" BETWEEN ? AND ?", start, end)
 }
 
-func (c *Criteria) GroupOr(group groupConditionSpec) *Criteria {
-	c.groupOrConditions = append(c.groupOrConditions, group)
-	return c
-}
-
 func (c *Criteria) OrWhere(query any, values ...any) *Criteria {
-	c.orConditions = append(c.orConditions, conditionSpec{query: query, args: values})
+	c.scopeClosures = append(c.scopeClosures, func(tx *gorm.DB) *gorm.DB {
+		return tx.Or(query, values...)
+	})
 	return c
 }
 
@@ -260,19 +339,22 @@ func (c *Criteria) Group(query string) *Criteria {
 }
 
 func (c *Criteria) Having(query any, values ...any) *Criteria {
-	c.havingConditions = append(c.havingConditions, havingSpec{query: query, args: values})
+	c.scopeClosures = append(c.scopeClosures, func(tx *gorm.DB) *gorm.DB {
+		return tx.Having(query, values...)
+	})
 	return c
 }
 
 func (c *Criteria) Joins(query string, values ...any) *Criteria {
-	c.joinConditions = append(c.joinConditions, joinSpec{query: query, args: values})
+	c.scopeClosures = append(c.scopeClosures, func(tx *gorm.DB) *gorm.DB {
+		return tx.Joins(query, values...)
+	})
 	return c
 }
 
 func (c *Criteria) AddPreload(name string, args ...any) *Criteria {
-	c.preloads = append(c.preloads, preloadEntry{
-		name: name,
-		args: args,
+	c.scopeClosures = append(c.scopeClosures, func(tx *gorm.DB) *gorm.DB {
+		return tx.Preload(name, args...)
 	})
 	return c
 }
@@ -303,29 +385,4 @@ func (c *Criteria) unsetOrder() {
 func (c *Criteria) unsetLimit() {
 	c.limit = 0
 	c.offset = 0
-}
-
-func (c *Criteria) buildConditionSpec(criteriaOperator string, field string, fieldValue any) (cond conditionSpec, err error) {
-	if operator, ok := conditionMapping[criteriaOperator]; ok {
-		cond.query = fmt.Sprintf("%s %s ?", field, operator)
-		cond.args = []any{fieldValue}
-	} else if slices.Contains(valueStringOperator, criteriaOperator) {
-		var value string
-		value, err = AnyToString(fieldValue)
-		if err != nil {
-			return
-		}
-		switch criteriaOperator {
-		case criteriaLike:
-			cond.query = fmt.Sprintf("%s like ?", field)
-			cond.args = []any{"%" + value + "%"}
-		case criteriaLLike:
-			cond.query = fmt.Sprintf("%s like ?", field)
-			cond.args = []any{"%" + value}
-		case criteriaRLike:
-			cond.query = fmt.Sprintf("%s like ?", field)
-			cond.args = []any{value + "%"}
-		}
-	}
-	return
 }

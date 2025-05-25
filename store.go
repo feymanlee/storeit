@@ -19,15 +19,9 @@ type Pagination[M any] struct {
 	Items   []M   `json:"items"`
 }
 
-type preloadEntry struct {
-	name string
-	args []interface{}
-}
-
 type GormStore[M interface{}] struct {
 	tx            *gorm.DB
 	db            *gorm.DB
-	preloads      []preloadEntry
 	columns       []string
 	hidden        []string
 	scopeClosures []gormClosure
@@ -138,7 +132,123 @@ func (r *GormStore[M]) Updates(ctx context.Context, attributes any, criteria *Cr
 
 func (r *GormStore[M]) Save(ctx context.Context, model M) *gorm.DB {
 	tx := r.present(ctx, nil).Save(&model)
+	r.reset() // 添加这一行，确保状态被重置
 	return tx
+}
+
+func (r *GormStore[M]) FindByIDs(ctx context.Context, ids []int64) ([]M, error) {
+	var models []M
+	if len(ids) < 1 {
+		return nil, fmt.Errorf("id is empty")
+	}
+	err := r.present(ctx, nil).Find(&models, ids).Error
+	r.reset()
+	if err != nil {
+		return nil, err
+	}
+	return models, nil // 修改为返回 nil 而不是 err
+}
+
+func (r *GormStore[M]) FindByID(ctx context.Context, id any) (*M, error) {
+	var model M
+	err := r.present(ctx, nil).First(&model, id).Error
+	r.reset()
+	if err != nil {
+		return nil, err
+	}
+	return &model, nil // 修改为返回 nil 而不是 err
+}
+
+func (r *GormStore[M]) First(ctx context.Context, criteria *Criteria) (*M, error) {
+	var model M
+	err := r.present(ctx, criteria).Take(&model).Error
+	r.reset()
+	if err != nil {
+		return nil, err
+	}
+	return &model, nil // 修改为返回 nil 而不是 err
+}
+
+func (r *GormStore[M]) Exists(ctx context.Context, criteria *Criteria) (bool, error) {
+	count, err := r.Count(ctx, criteria)
+	if err != nil {
+		return false, err
+	}
+	// 移除这里的 r.reset() 调用，因为 Count 方法已经调用了
+	return count > 0, nil
+}
+
+// 修改 present 方法，解决并发安全问题
+func (r *GormStore[M]) present(ctx context.Context, criteria *Criteria) *gorm.DB {
+	var db *gorm.DB
+	if r.tx != nil {
+		db = r.tx.WithContext(ctx)
+	} else {
+		db = r.db.WithContext(ctx)
+	}
+
+	// 创建本地副本，避免修改原始对象
+	var localScopeClosures []gormClosure
+	if len(r.scopeClosures) > 0 {
+		localScopeClosures = append(localScopeClosures, r.scopeClosures...)
+	}
+
+	if len(r.hidden) > 0 {
+		db = db.Omit(r.hidden...)
+	}
+	if len(r.columns) > 0 {
+		db = db.Select(r.columns)
+	}
+	if r.unscoped {
+		db = db.Unscoped()
+	}
+	if criteria != nil {
+		if criteria.GetOffset() > 0 {
+			db = db.Offset(criteria.GetOffset())
+		}
+		// 有 offset 一定要有 limit
+		if criteria.limit > 0 || criteria.GetOffset() > 0 {
+			db = db.Limit(criteria.limit)
+		}
+		if criteria.group != "" {
+			db = db.Group(criteria.group)
+		}
+		for _, item := range criteria.orders {
+			db = db.Order(item)
+		}
+		// 使用本地副本而不是直接修改 r.scopeClosures
+		if len(criteria.scopeClosures) > 0 {
+			localScopeClosures = append(localScopeClosures, criteria.scopeClosures...)
+		}
+	}
+
+	// 使用本地副本
+	if len(localScopeClosures) > 0 {
+		for _, closure := range localScopeClosures {
+			db = closure(db)
+		}
+	}
+	return db
+}
+
+func (r *GormStore[M]) onceClone() *GormStore[M] {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	newStore := New[M](r.db)
+	if len(r.scopeClosures) > 0 {
+		newStore.scopeClosures = append(newStore.scopeClosures, r.scopeClosures...)
+	}
+	if len(r.hidden) > 0 {
+		newStore.hidden = append(newStore.hidden, r.hidden...)
+	}
+	if len(r.columns) > 0 {
+		newStore.columns = append(newStore.columns, r.columns...)
+	}
+	newStore.unscoped = r.unscoped
+	newStore.tx = r.tx
+
+	return newStore
 }
 
 func (r *GormStore[M]) Update(ctx context.Context, column string, value interface{}, criteria *Criteria) *gorm.DB {
@@ -162,43 +272,6 @@ func (r *GormStore[M]) UpdatesById(ctx context.Context, id any, updates interfac
 	return tx
 }
 
-// FindByIDs find the result by IDs
-func (r *GormStore[M]) FindByIDs(ctx context.Context, ids []int64) ([]M, error) {
-	var models []M
-	if len(ids) < 1 {
-		return nil, fmt.Errorf("id is empty")
-	}
-	err := r.present(ctx, nil).Find(&models, ids).Error
-	r.reset()
-	if err != nil {
-		return nil, err
-	}
-	return models, err
-}
-
-// FindByID find the result by ID
-func (r *GormStore[M]) FindByID(ctx context.Context, id any) (*M, error) {
-	var model M
-	err := r.present(ctx, nil).First(&model, id).Error
-	r.reset()
-	if err != nil {
-		return nil, err
-	}
-	return &model, err
-}
-
-// First Execute the query and get the first result.
-func (r *GormStore[M]) First(ctx context.Context, criteria *Criteria) (*M, error) {
-	var model M
-	err := r.present(ctx, criteria).Take(&model).Error
-	r.reset()
-	if err != nil {
-		return nil, err
-	}
-
-	return &model, err
-}
-
 // FindInBatches finds all records in batches of batchSize
 func (r *GormStore[M]) FindInBatches(ctx context.Context, models *[]M, batchSize int, fc func(tx *gorm.DB, batch int) error, criteria *Criteria) error {
 	err := r.present(ctx, criteria).FindInBatches(models, batchSize, fc).Error
@@ -210,23 +283,17 @@ func (r *GormStore[M]) FindInBatches(ctx context.Context, models *[]M, batchSize
 func (r *GormStore[M]) Count(ctx context.Context, criteria *Criteria) (i int64, err error) {
 	var c Criteria
 	var model M
-	err = copier.Copy(&c, criteria)
-	if err != nil {
-		return
+	if criteria != nil {
+		err = copier.Copy(&c, criteria)
+		if err != nil {
+			return
+		}
 	}
 	c.unsetOrder()
 	c.unsetLimit()
 	err = r.present(ctx, &c).Model(&model).Count(&i).Error
+	r.reset()
 	return
-}
-
-// Exists check if the result exists
-func (r *GormStore[M]) Exists(ctx context.Context, criteria *Criteria) (bool, error) {
-	count, err := r.Count(ctx, criteria)
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
 }
 
 // Sum Retrieve the sum of the values of a given column.
@@ -236,13 +303,16 @@ func (r *GormStore[M]) Sum(ctx context.Context, column string, criteria *Criteri
 	var result struct {
 		Total float64
 	}
-	err = copier.Copy(&c, criteria)
-	if err != nil {
-		return
+	if criteria != nil {
+		err = copier.Copy(&c, criteria)
+		if err != nil {
+			return
+		}
 	}
 	c.unsetOrder()
 	c.unsetLimit()
 	err = r.present(ctx, &c).Model(&model).Select("SUM(" + column + ") as total").Scan(&result).Error
+	r.reset()
 	if err != nil {
 		return
 	}
@@ -253,9 +323,11 @@ func (r *GormStore[M]) Sum(ctx context.Context, column string, criteria *Criteri
 func (r *GormStore[M]) Avg(ctx context.Context, column string, criteria *Criteria) (avg float64, err error) {
 	var c Criteria
 	var model M
-	err = copier.Copy(&c, criteria)
-	if err != nil {
-		return
+	if criteria != nil {
+		err = copier.Copy(&c, criteria)
+		if err != nil {
+			return
+		}
 	}
 	var result struct {
 		Avg float64
@@ -263,6 +335,7 @@ func (r *GormStore[M]) Avg(ctx context.Context, column string, criteria *Criteri
 	c.unsetOrder()
 	c.unsetLimit()
 	err = r.present(ctx, &c).Model(&model).Select("AVG(" + column + ") as avg").Scan(&result).Error
+	r.reset()
 	if err != nil {
 		return
 	}
@@ -323,7 +396,8 @@ func (r *GormStore[M]) Paginate(ctx context.Context, criteria *Criteria) (*Pagin
 		items, err = r.Find(ctx, criteria)
 		return err
 	})
-	if err := eg.Wait(); err != nil {
+	err := eg.Wait()
+	if err != nil {
 		return nil, err
 	}
 	var pagination = Pagination[M]{
@@ -343,9 +417,8 @@ func (r *GormStore[M]) ScopeClosure(closure gormClosure) *GormStore[M] {
 
 func (r *GormStore[M]) AddPreload(name string, args ...any) *GormStore[M] {
 	nr := r.onceClone()
-	nr.preloads = append(nr.preloads, preloadEntry{
-		name: name,
-		args: args,
+	nr.scopeClosures = append(nr.scopeClosures, func(tx *gorm.DB) *gorm.DB {
+		return tx.Preload(name, args...)
 	})
 
 	return nr
@@ -354,97 +427,11 @@ func (r *GormStore[M]) AddPreload(name string, args ...any) *GormStore[M] {
 func (r *GormStore[M]) reset() *GormStore[M] {
 	r.columns = nil
 	r.hidden = nil
-	r.preloads = nil
 	r.scopeClosures = nil
 	r.unscoped = false
 	r.tx = nil
 
 	return r
-}
-
-func (r *GormStore[M]) present(ctx context.Context, criteria *Criteria) *gorm.DB {
-	var db *gorm.DB
-	if r.tx != nil {
-		db = r.tx.WithContext(ctx)
-	} else {
-		db = r.db.WithContext(ctx)
-	}
-	if r.preloads != nil {
-		// 合并查询条件里面的 preloads
-		if criteria != nil && criteria.preloads != nil {
-			r.preloads = append(r.preloads, criteria.preloads...)
-		}
-		for _, p := range r.preloads {
-			if p.name == "" {
-				continue
-			}
-			if IsEmpty(p.args) {
-				db = db.Preload(p.name)
-			} else {
-				db = db.Preload(p.name, p.args...)
-			}
-		}
-	}
-	if len(r.scopeClosures) > 0 {
-		for _, closure := range r.scopeClosures {
-			db = closure(db)
-		}
-	}
-	if len(r.hidden) > 0 {
-		db = db.Omit(r.hidden...)
-	}
-	if len(r.columns) > 0 {
-		db = db.Select(r.columns)
-	}
-	if r.unscoped {
-		db = db.Unscoped()
-	}
-	if criteria != nil {
-		for _, group := range criteria.groupOrConditions {
-			if len(group) == 0 {
-				continue
-			} else if len(group) == 1 {
-				db = db.Where(group[0].query, group[0].args...)
-			} else {
-				db1 := db.Where(group[0].query, group[0].args...)
-				for i, spec := range group {
-					if i > 1 {
-						db1 = db1.Or(spec.query, spec.args...)
-					}
-				}
-				db = db.Where(db1)
-			}
-		}
-		for _, item := range criteria.whereConditions {
-			db = db.Where(item.query, item.args...)
-		}
-		for _, item := range criteria.orConditions {
-			db = db.Or(item.query, item.args...)
-		}
-		for _, item := range criteria.notConditions {
-			db = db.Not(item.query, item.args...)
-		}
-		for _, item := range criteria.havingConditions {
-			db = db.Having(item.query, item.args...)
-		}
-		for _, item := range criteria.joinConditions {
-			db = db.Joins(item.query, item.args...)
-		}
-		for _, item := range criteria.orders {
-			db = db.Order(item)
-		}
-		if criteria.GetOffset() > 0 {
-			db = db.Offset(criteria.GetOffset())
-		}
-		// 有 offset 一定要有 limit
-		if criteria.limit > 0 || criteria.GetOffset() > 0 {
-			db = db.Limit(criteria.limit)
-		}
-		if criteria.group != "" {
-			db = db.Group(criteria.group)
-		}
-	}
-	return db
 }
 
 func (r *GormStore[M]) addColumns(columns []string) *GormStore[M] {
@@ -459,28 +446,4 @@ func (r *GormStore[M]) addHiddenColumns(columns []string) *GormStore[M] {
 	nr.hidden = append(nr.hidden, columns...)
 
 	return nr
-}
-
-func (r *GormStore[M]) onceClone() *GormStore[M] {
-	if r.cloned {
-		return r
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	newStore := New[M](r.db)
-	if len(r.scopeClosures) > 0 {
-		newStore.scopeClosures = append(newStore.scopeClosures, r.scopeClosures...)
-	}
-	if len(r.hidden) > 0 {
-		newStore.hidden = append(newStore.hidden, r.hidden...)
-	}
-	if len(r.preloads) > 0 {
-		newStore.preloads = append(newStore.preloads, r.preloads...)
-	}
-	if len(r.columns) > 0 {
-		newStore.columns = append(newStore.columns, r.columns...)
-	}
-	newStore.unscoped = r.unscoped
-	newStore.cloned = true
-	return newStore
 }

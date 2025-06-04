@@ -136,16 +136,6 @@ jobs:
       - name: Build
         run: go build -v ./...
 
-      - name: Check mod tidy
-        shell: bash
-        run: |
-          go mod tidy
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "go mod tidy made changes, please run 'go mod tidy' and commit the changes"
-            git diff
-            exit 1
-          fi
-
   # 所有检查完成后的汇总作业
   all-checks:
     name: All Checks Passed

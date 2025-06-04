@@ -81,18 +81,15 @@ jobs:
         run: go mod verify
 
       - name: Run tests
-        run: go test -coverprofile=coverage.out ./...
+        run: go test -coverprofile=coverage.txt ./...
         shell: bash  # 强制使用 bash，确保路径兼容
 
-      - name: Upload coverage to Codecov
+      - name: Upload coverage reports to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
-          file: ./coverage.out
-          flags: unittests
-          name: codecov-umbrella
-          fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+          slug: feymanlee/storeit
 
   build:
     name: Build

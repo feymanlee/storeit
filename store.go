@@ -25,7 +25,6 @@ type GormStore[M interface{}] struct {
 	columns       []string
 	hidden        []string
 	scopeClosures []gormClosure
-	cloned        bool
 	mu            sync.Mutex
 	unscoped      bool
 }

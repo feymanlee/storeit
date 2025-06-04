@@ -45,14 +45,7 @@ func (r *GormStore[M]) SetTx(tx *gorm.DB) *GormStore[M] {
 }
 
 func (r *GormStore[M]) Insert(ctx context.Context, model *M) *gorm.DB {
-	var tx *gorm.DB
-	if r.tx != nil {
-		tx = r.tx.WithContext(ctx).Create(model)
-	} else {
-		tx = r.db.WithContext(ctx).Create(model)
-	}
-	r.reset()
-	return tx
+	return r.Create(ctx, model)
 }
 
 func (r *GormStore[M]) Unscoped() *GormStore[M] {

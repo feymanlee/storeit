@@ -13,7 +13,7 @@ import (
 )
 
 type TestModel struct {
-	ID        uint   `gorm:"primarykey,column:id"`
+	ID        int    `gorm:"primarykey,column:id"`
 	Name      string `gorm:"size:255,column:name"`
 	Age       int    `gorm:"size:3,column:age"`
 	Score     int    `gorm:"size:3,column:score"`
@@ -24,7 +24,7 @@ type TestModel struct {
 }
 
 type Address struct {
-	ID     uint   `gorm:"primarykey,column:id"`
+	ID     int    `gorm:"primarykey,column:id"`
 	UserId uint   `gorm:"column:user_id"`
 	Street string `gorm:"column:street"`
 }
@@ -35,13 +35,13 @@ type UserWithAddress struct {
 }
 
 type Department struct {
-	ID   uint   `gorm:"primarykey"`
+	ID   int    `gorm:"primarykey"`
 	Name string `gorm:"size:255"`
 }
 
 type Employee struct {
 	TestModel
-	DepartmentID uint       `gorm:"column:department_id"`
+	DepartmentID int        `gorm:"column:department_id"`
 	Department   Department `gorm:"foreignKey:DepartmentID"`
 }
 

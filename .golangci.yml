@@ -26,6 +26,5 @@ formatters:
     - goimports
 
 output:
-  format: colored-line-number
   print-issued-lines: true
   print-config: true

@@ -81,13 +81,8 @@ jobs:
         run: go mod verify
 
       - name: Run tests
-        run: |
-          go test -coverprofile=coverage.out -covermode=atomic ./...
-
-      - name: Run tests with race detector (Linux/macOS only)
-        if: matrix.os != 'windows-latest'
-        run: |
-          go test -short ./...
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+        shell: bash  # 强制使用 bash，确保路径兼容
 
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'

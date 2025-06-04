@@ -296,7 +296,7 @@ func TestGormStore_FindByIDs(t *testing.T) {
 	assert.Error(t, err)
 
 	// 测试正常查询
-	var ids []int64
+	var ids = make([]int64, 0, len(models))
 	for _, m := range models {
 		ids = append(ids, int64(m.ID))
 	}
@@ -521,7 +521,6 @@ func TestGormStore_ScopeClosure(t *testing.T) {
 }
 
 func TestGormStore_AddPreload(t *testing.T) {
-
 	db := setupTestDB(t)
 	err := db.AutoMigrate(&Address{})
 	assert.NoError(t, err)
@@ -728,7 +727,6 @@ func TestGormStore_ComplexQueries(t *testing.T) {
 }
 
 func TestGormStore_Joins(t *testing.T) {
-
 	db := setupTestDB(t)
 
 	// 清理之前可能存在的表

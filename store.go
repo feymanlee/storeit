@@ -183,14 +183,14 @@ func (r *GormStore[M]) Update(ctx context.Context, column string, value interfac
 
 func (r *GormStore[M]) UpdateById(ctx context.Context, id any, column string, value interface{}) *gorm.DB {
 	var model M
-	tx := r.present(ctx, nil).Model(&model).Where("id = ?", id).Update(column, value)
+	tx := r.present(ctx, nil).Model(&model).Where("id", id).Update(column, value)
 	r.reset()
 	return tx
 }
 
 func (r *GormStore[M]) UpdatesById(ctx context.Context, id any, updates interface{}) *gorm.DB {
 	var model M
-	tx := r.present(ctx, nil).Model(&model).Where("id = ?", id).Updates(updates)
+	tx := r.present(ctx, nil).Model(&model).Where("id", id).Updates(updates)
 	r.reset()
 	return tx
 }

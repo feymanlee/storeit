@@ -801,3 +801,105 @@ func TestGormStore_Pagination_EdgeCases(t *testing.T) {
 	assert.Equal(t, int64(15), pagination.Total)
 	assert.Equal(t, 15, len(pagination.Items))
 }
+
+func TestGormStore_Insert(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 测试 Insert 方法（Create 的别名）
+	model := &TestModel{
+		Name:  "Insert Test User",
+		Age:   28,
+		Email: "insert@example.com",
+	}
+
+	// 使用 Insert 方法
+	err := store.Insert(ctx, model).Error
+	assert.NoError(t, err)
+	assert.NotZero(t, model.ID)
+
+	// 验证插入的数据
+	found, err := store.FindByID(ctx, model.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, model.Name, found.Name)
+	assert.Equal(t, model.Age, found.Age)
+	assert.Equal(t, model.Email, found.Email)
+}
+
+func TestGormStore_Delete(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 准备测试数据
+	model := &TestModel{
+		Name:  "Delete Test User",
+		Age:   30,
+		Email: "delete@example.com",
+	}
+	err := store.Create(ctx, model).Error
+	assert.NoError(t, err)
+
+	// 测试 Delete 方法
+	err = store.Delete(ctx, model).Error
+	assert.NoError(t, err)
+
+	// 验证软删除
+	_, err = store.FindByID(ctx, model.ID)
+	assert.Error(t, err)
+
+	// 验证使用 Unscoped 可以找到已删除的记录
+	found, err := store.Unscoped().FindByID(ctx, model.ID)
+	assert.NoError(t, err)
+	assert.NotNil(t, found.DeletedAt)
+}
+
+func TestGormStore_UpdatesById(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 准备测试数据
+	model := &TestModel{
+		Name:  "Updates Test User",
+		Age:   35,
+		Email: "updates@example.com",
+	}
+	err := store.Create(ctx, model).Error
+	assert.NoError(t, err)
+
+	// 测试 UpdatesById 方法
+	updates := map[string]interface{}{
+		"name":  "Updated User",
+		"age":   40,
+		"email": "updated@example.com",
+	}
+	err = store.UpdatesById(ctx, model.ID, updates).Error
+	assert.NoError(t, err)
+
+	// 验证更新后的数据
+	found, err := store.FindByID(ctx, model.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, "Updated User", found.Name)
+	assert.Equal(t, 40, found.Age)
+	assert.Equal(t, "updated@example.com", found.Email)
+
+	// 测试更新不存在的记录
+	err = store.UpdatesById(ctx, 9999, updates).Error
+	assert.NoError(t, err) // GORM 在记录不存在时不会返回错误
+
+	// 测试部分字段更新
+	partialUpdates := map[string]interface{}{
+		"age": 45,
+	}
+	err = store.UpdatesById(ctx, model.ID, partialUpdates).Error
+	assert.NoError(t, err)
+
+	// 验证部分更新的结果
+	found, err = store.FindByID(ctx, model.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, "Updated User", found.Name)         // 保持不变
+	assert.Equal(t, 45, found.Age)                      // 已更新
+	assert.Equal(t, "updated@example.com", found.Email) // 保持不变
+}

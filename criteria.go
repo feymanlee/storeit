@@ -161,10 +161,9 @@ func ExtractCriteria(source any) (*Criteria, error) {
 }
 
 func (c *Criteria) Where(query any, values ...any) *Criteria {
-	c.scopeClosures = append(c.scopeClosures, func(tx *gorm.DB) *gorm.DB {
+	return c.ScopeClosure(func(tx *gorm.DB) *gorm.DB {
 		return tx.Where(query, values...)
 	})
-	return c
 }
 
 func (c *Criteria) WhereGt(field string, value any) *Criteria {
@@ -226,22 +225,19 @@ func (c *Criteria) GroupOr(group groupConditionSpec) *Criteria {
 	if len(group) == 0 {
 		return c // 如果组为空，直接返回
 	}
-
-	c.scopeClosures = append(c.scopeClosures, func(tx *gorm.DB) *gorm.DB {
+	return c.ScopeClosure(func(tx *gorm.DB) *gorm.DB {
 		sub := tx.Session(&gorm.Session{NewDB: true})
 		for _, cond := range group {
 			sub = sub.Or(cond.query, cond.args...)
 		}
 		return tx.Where(sub)
 	})
-	return c
 }
 
 func (c *Criteria) WhereNot(query any, values ...any) *Criteria {
-	c.scopeClosures = append(c.scopeClosures, func(tx *gorm.DB) *gorm.DB {
+	return c.ScopeClosure(func(tx *gorm.DB) *gorm.DB {
 		return tx.Not(query, values...)
 	})
-	return c
 }
 
 func (c *Criteria) WhereIsNull(field string) *Criteria {
@@ -284,10 +280,9 @@ func (c *Criteria) WhereBetween(field string, start, end any) *Criteria {
 }
 
 func (c *Criteria) OrWhere(query any, values ...any) *Criteria {
-	c.scopeClosures = append(c.scopeClosures, func(tx *gorm.DB) *gorm.DB {
+	return c.ScopeClosure(func(tx *gorm.DB) *gorm.DB {
 		return tx.Or(query, values...)
 	})
-	return c
 }
 
 func (c *Criteria) Order(value string, isDescending bool) *Criteria {
@@ -339,23 +334,25 @@ func (c *Criteria) Group(query string) *Criteria {
 }
 
 func (c *Criteria) Having(query any, values ...any) *Criteria {
-	c.scopeClosures = append(c.scopeClosures, func(tx *gorm.DB) *gorm.DB {
+	return c.ScopeClosure(func(tx *gorm.DB) *gorm.DB {
 		return tx.Having(query, values...)
 	})
-	return c
 }
 
 func (c *Criteria) Joins(query string, values ...any) *Criteria {
-	c.scopeClosures = append(c.scopeClosures, func(tx *gorm.DB) *gorm.DB {
+	return c.ScopeClosure(func(tx *gorm.DB) *gorm.DB {
 		return tx.Joins(query, values...)
 	})
-	return c
 }
 
 func (c *Criteria) AddPreload(name string, args ...any) *Criteria {
-	c.scopeClosures = append(c.scopeClosures, func(tx *gorm.DB) *gorm.DB {
+	return c.ScopeClosure(func(tx *gorm.DB) *gorm.DB {
 		return tx.Preload(name, args...)
 	})
+}
+
+func (c *Criteria) ScopeClosure(closure gormClosure) *Criteria {
+	c.scopeClosures = append(c.scopeClosures, closure)
 	return c
 }
 

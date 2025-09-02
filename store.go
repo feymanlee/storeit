@@ -423,6 +423,9 @@ func (r *GormStore[M]) reset() *GormStore[M] {
 }
 
 func (r *GormStore[M]) addColumns(columns []string) *GormStore[M] {
+	if len(columns) == 0 {
+		return r
+	}
 	nr := r.onceClone()
 	nr.columns = append(nr.columns, columns...)
 
@@ -430,6 +433,9 @@ func (r *GormStore[M]) addColumns(columns []string) *GormStore[M] {
 }
 
 func (r *GormStore[M]) addHiddenColumns(columns []string) *GormStore[M] {
+	if len(columns) == 0 {
+		return r
+	}
 	nr := r.onceClone()
 	nr.hidden = append(nr.hidden, columns...)
 

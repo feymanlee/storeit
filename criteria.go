@@ -186,6 +186,11 @@ func (c *Criteria) WhereLt(field string, value any) *Criteria {
 	return c.Where(field+" < ?", value)
 }
 
+func (c *Criteria) WhereNeq(field string, value any) *Criteria {
+	field = QuoteReservedWord(field)
+	return c.Where(field+" <> ?", value)
+}
+
 // 优化 buildConditionSpec 方法，使用 QuoteReservedWord 保护字段名
 func (c *Criteria) buildConditionSpec(criteriaOperator string, field string, fieldValue any) (cond conditionSpec, err error) {
 	field = QuoteReservedWord(field)

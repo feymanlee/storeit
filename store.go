@@ -195,6 +195,53 @@ func (r *GormStore[M]) FindInBatches(ctx context.Context, models *[]M, batchSize
 	return err
 }
 
+// QueryInBatches finds all records in batches of batchSize not use pk
+func (r *GormStore[M]) QueryInBatches(ctx context.Context, models *[]M, batchSize int, fc func(tx *gorm.DB, batch int) error, criteria *Criteria) error {
+	// 确保在任何情况下都会重置状态
+	defer r.reset()
+
+	// 1. 使用 Rows 获取流式游标
+	rows, err := r.present(ctx, criteria).Rows()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	currentBatch := 1
+	// 预分配内存，避免频繁扩容
+	batchData := make([]M, 0, batchSize)
+
+	for rows.Next() {
+		var m M
+		// 2. 将数据扫描进模型
+		if err := r.db.ScanRows(rows, &m); err != nil {
+			return err
+		}
+		batchData = append(batchData, m)
+
+		// 3. 达到批次大小，触发回调
+		if len(batchData) == batchSize {
+			*models = batchData // 修改外部指针内容
+			if err := fc(r.db, currentBatch); err != nil {
+				return err
+			}
+			// 重置当前批次，复用内存空间
+			batchData = make([]M, 0, batchSize)
+			currentBatch++
+		}
+	}
+
+	// 4. 处理最后一批不满 batchSize 的数据
+	if len(batchData) > 0 {
+		*models = batchData
+		if err := fc(r.db, currentBatch); err != nil {
+			return err
+		}
+	}
+
+	return rows.Err()
+}
+
 // Count Retrieve the "count" result of the query.
 func (r *GormStore[M]) Count(ctx context.Context, criteria *Criteria) (i int64, err error) {
 	var c Criteria

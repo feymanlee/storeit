@@ -199,9 +199,9 @@ func (r *GormStore[M]) FindInBatches(ctx context.Context, models *[]M, batchSize
 func (r *GormStore[M]) QueryInBatches(ctx context.Context, models *[]M, batchSize int, fc func(tx *gorm.DB, batch int) error, criteria *Criteria) error {
 	// 确保在任何情况下都会重置状态
 	defer r.reset()
-
+	var model M
 	// 1. 使用 Rows 获取流式游标
-	rows, err := r.present(ctx, criteria).Rows()
+	rows, err := r.present(ctx, criteria).Model(&model).Rows()
 	if err != nil {
 		return err
 	}

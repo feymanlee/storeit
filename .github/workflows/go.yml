@@ -4,6 +4,7 @@ on:
     paths:
       - 'go.mod'
       - 'go.sum'
+      - '.golangci.yml'
       - '**.go'
       - '.github/workflows/**.yml'
   push:
@@ -11,6 +12,7 @@ on:
     paths:
       - 'go.mod'
       - 'go.sum'
+      - '.golangci.yml'
       - '**.go'
       - '.github/workflows/**.yml'
 
@@ -28,7 +30,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: ${{ env.GO_VERSION }}
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v4
         with:
@@ -42,7 +44,6 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go-version: ['1.23'] # 限制为最新版本以减少兼容性问题
 
     steps:
       - name: Checkout code
@@ -51,7 +52,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ matrix.go-version }}
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Download dependencies
         run: go mod download
@@ -61,14 +62,20 @@ jobs:
 
       - name: Run tests
         run: go test -coverprofile=coverage.txt ./...
-        shell: bash  # 强制使用 bash，确保路径兼容
+        shell: bash
+
+      - name: Run race tests
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -race ./...
+        shell: bash
 
       - name: Upload coverage reports to Codecov
-        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'
+        if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: feymanlee/storeit
+          fail_ci_if_error: false
 
   build:
     name: Build
@@ -84,7 +91,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Build
         run: go build -v ./...

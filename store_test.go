@@ -102,7 +102,7 @@ func runConcurrent(numWorkers int, fn func(workerID int) error) []error {
 	wg.Wait()
 	close(errCh)
 
-	var errs []error
+	errs := make([]error, 0, numWorkers)
 	for err := range errCh {
 		errs = append(errs, err)
 	}

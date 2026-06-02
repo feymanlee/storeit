@@ -5,12 +5,19 @@ package storeit
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"sync"
 
-	"github.com/jinzhu/copier"
 	"golang.org/x/sync/errgroup"
 	"gorm.io/gorm"
+)
+
+var (
+	ErrNilModels     = errors.New("models must not be nil")
+	ErrNilCallback   = errors.New("callback must not be nil")
+	ErrInvalidBatch  = errors.New("batch size must be greater than zero")
+	ErrEmptyID       = errors.New("id is empty")
+	ErrInvalidColumn = errors.New("column must not be empty")
 )
 
 // gormClosure is a function type that modifies a GORM DB instance.
@@ -32,13 +39,13 @@ type Pagination[M any] struct {
 //
 // Type parameter M represents the model type this store operates on.
 type GormStore[M interface{}] struct {
-	tx            *gorm.DB       // Transaction context, if any
-	db            *gorm.DB       // Underlying GORM database connection
-	columns       []string       // Columns to select in queries
-	hidden        []string       // Columns to omit from results
-	scopeClosures []gormClosure  // Query scope modifiers
-	mu            sync.Mutex     // Mutex for thread-safe state operations
-	unscoped      bool           // Whether to include soft-deleted records
+	tx            *gorm.DB      // Transaction context, if any
+	db            *gorm.DB      // Underlying GORM database connection
+	columns       []string      // Columns to select in queries
+	hidden        []string      // Columns to omit from results
+	scopeClosures []gormClosure // Query scope modifiers
+	mu            sync.Mutex    // Mutex for thread-safe state operations
+	unscoped      bool          // Whether to include soft-deleted records
 }
 
 // New creates a new GormStore instance for the given model type.
@@ -240,7 +247,7 @@ func (r *GormStore[M]) Save(ctx context.Context, model M) *gorm.DB {
 func (r *GormStore[M]) FindByIDs(ctx context.Context, ids []int64) ([]M, error) {
 	var models []M
 	if len(ids) < 1 {
-		return nil, fmt.Errorf("id is empty")
+		return nil, ErrEmptyID
 	}
 	err := r.present(ctx, nil).Find(&models, ids).Error
 	r.reset()
@@ -364,11 +371,21 @@ func (r *GormStore[M]) FindInBatches(ctx context.Context, models *[]M, batchSize
 //	    return nil
 //	}, criteria)
 func (r *GormStore[M]) QueryInBatches(ctx context.Context, models *[]M, batchSize int, fc func(tx *gorm.DB, batch int) error, criteria *Criteria) error {
+	if models == nil {
+		return ErrNilModels
+	}
+	if batchSize <= 0 {
+		return ErrInvalidBatch
+	}
+	if fc == nil {
+		return ErrNilCallback
+	}
 	// Ensure state is reset in all cases
 	defer r.reset()
 	var model M
 	// Use Rows to get a streaming cursor
-	rows, err := r.present(ctx, criteria).Model(&model).Rows()
+	db := r.present(ctx, criteria).Model(&model)
+	rows, err := db.Rows()
 	if err != nil {
 		return err
 	}
@@ -381,7 +398,7 @@ func (r *GormStore[M]) QueryInBatches(ctx context.Context, models *[]M, batchSiz
 	for rows.Next() {
 		var m M
 		// Scan data into the model
-		if err := r.db.ScanRows(rows, &m); err != nil {
+		if err := db.ScanRows(rows, &m); err != nil {
 			return err
 		}
 		batchData = append(batchData, m)
@@ -389,7 +406,7 @@ func (r *GormStore[M]) QueryInBatches(ctx context.Context, models *[]M, batchSiz
 		// Trigger callback when batch size is reached
 		if len(batchData) == batchSize {
 			*models = batchData // Modify external pointer content
-			if err := fc(r.db, currentBatch); err != nil {
+			if err := fc(db, currentBatch); err != nil {
 				return err
 			}
 			// Reset current batch, reusing memory space
@@ -401,7 +418,7 @@ func (r *GormStore[M]) QueryInBatches(ctx context.Context, models *[]M, batchSiz
 	// Process the final batch if it has remaining data
 	if len(batchData) > 0 {
 		*models = batchData
-		if err := fc(r.db, currentBatch); err != nil {
+		if err := fc(db, currentBatch); err != nil {
 			return err
 		}
 	}
@@ -417,17 +434,11 @@ func (r *GormStore[M]) QueryInBatches(ctx context.Context, models *[]M, batchSiz
 //	criteria := storeit.NewCriteria().Where("status = ?", "active")
 //	count, err := store.Count(ctx, criteria)
 func (r *GormStore[M]) Count(ctx context.Context, criteria *Criteria) (i int64, err error) {
-	var c Criteria
 	var model M
-	if criteria != nil {
-		err = copier.Copy(&c, criteria)
-		if err != nil {
-			return
-		}
-	}
+	c := cloneCriteria(criteria)
 	c.unsetOrder()
 	c.unsetLimit()
-	err = r.present(ctx, &c).Model(&model).Count(&i).Error
+	err = r.present(ctx, c).Model(&model).Count(&i).Error
 	r.reset()
 	return
 }
@@ -440,20 +451,18 @@ func (r *GormStore[M]) Count(ctx context.Context, criteria *Criteria) (i int64, 
 //	criteria := storeit.NewCriteria().Where("status = ?", "completed")
 //	total, err := store.Sum(ctx, "amount", criteria)
 func (r *GormStore[M]) Sum(ctx context.Context, column string, criteria *Criteria) (sum float64, err error) {
-	var c Criteria
 	var model M
 	var result struct {
 		Total float64
 	}
-	if criteria != nil {
-		err = copier.Copy(&c, criteria)
-		if err != nil {
-			return
-		}
+	if column == "" {
+		err = ErrInvalidColumn
+		return
 	}
+	c := cloneCriteria(criteria)
 	c.unsetOrder()
 	c.unsetLimit()
-	err = r.present(ctx, &c).Model(&model).Select("SUM(" + column + ") as total").Scan(&result).Error
+	err = r.present(ctx, c).Model(&model).Select("SUM(" + QuoteReservedWord(column) + ") as total").Scan(&result).Error
 	r.reset()
 	if err != nil {
 		return
@@ -469,20 +478,18 @@ func (r *GormStore[M]) Sum(ctx context.Context, column string, criteria *Criteri
 //	criteria := storeit.NewCriteria().Where("status = ?", "completed")
 //	avg, err := store.Avg(ctx, "rating", criteria)
 func (r *GormStore[M]) Avg(ctx context.Context, column string, criteria *Criteria) (avg float64, err error) {
-	var c Criteria
 	var model M
-	if criteria != nil {
-		err = copier.Copy(&c, criteria)
-		if err != nil {
-			return
-		}
+	if column == "" {
+		err = ErrInvalidColumn
+		return
 	}
 	var result struct {
 		Avg float64
 	}
+	c := cloneCriteria(criteria)
 	c.unsetOrder()
 	c.unsetLimit()
-	err = r.present(ctx, &c).Model(&model).Select("AVG(" + column + ") as avg").Scan(&result).Error
+	err = r.present(ctx, c).Model(&model).Select("AVG(" + QuoteReservedWord(column) + ") as avg").Scan(&result).Error
 	r.reset()
 	if err != nil {
 		return
@@ -559,6 +566,9 @@ func (r *GormStore[M]) All(ctx context.Context) ([]M, error) {
 //	criteria := storeit.NewCriteria().Where("status = ?", "active").Page(2).PerPage(20)
 //	pagination, err := store.Paginate(ctx, criteria)
 func (r *GormStore[M]) Paginate(ctx context.Context, criteria *Criteria) (*Pagination[M], error) {
+	if criteria == nil {
+		criteria = NewCriteria()
+	}
 	if criteria.GetPage() < 1 {
 		criteria.Page(1)
 	}
@@ -566,22 +576,23 @@ func (r *GormStore[M]) Paginate(ctx context.Context, criteria *Criteria) (*Pagin
 		criteria.PerPage(50)
 	}
 	var (
-		eg    errgroup.Group
+		eg    *errgroup.Group
 		total int64
 		items []M
 	)
+	eg, groupCtx := errgroup.WithContext(ctx)
 	// Clone stores for concurrent use to avoid race conditions
 	countStore := r.onceClone()
 	findStore := r.onceClone()
 
 	eg.Go(func() error {
 		var err error
-		total, err = countStore.Count(ctx, criteria)
+		total, err = countStore.Count(groupCtx, criteria)
 		return err
 	})
 	eg.Go(func() error {
 		var err error
-		items, err = findStore.Find(ctx, criteria)
+		items, err = findStore.Find(groupCtx, criteria)
 		return err
 	})
 	err := eg.Wait()
@@ -713,8 +724,7 @@ func (r *GormStore[M]) onceClone() *GormStore[M] {
 	return newStore
 }
 
-// reset clears all temporary state (columns, hidden fields, scopes, transaction)
-// after a database operation. This ensures each operation starts fresh.
+// reset clears temporary query state after a database operation.
 func (r *GormStore[M]) reset() *GormStore[M] {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -723,7 +733,6 @@ func (r *GormStore[M]) reset() *GormStore[M] {
 	r.hidden = nil
 	r.scopeClosures = nil
 	r.unscoped = false
-	r.tx = nil
 
 	return r
 }
@@ -750,4 +759,22 @@ func (r *GormStore[M]) addHiddenColumns(columns []string) *GormStore[M] {
 	nr.hidden = append(nr.hidden, columns...)
 
 	return nr
+}
+
+func cloneCriteria(criteria *Criteria) *Criteria {
+	c := &Criteria{}
+	if criteria == nil {
+		return c
+	}
+	c.limit = criteria.limit
+	c.offset = criteria.offset
+	c.group = criteria.group
+	c.page = criteria.page
+	if len(criteria.scopeClosures) > 0 {
+		c.scopeClosures = append(c.scopeClosures, criteria.scopeClosures...)
+	}
+	if len(criteria.orders) > 0 {
+		c.orders = append(c.orders, criteria.orders...)
+	}
+	return c
 }

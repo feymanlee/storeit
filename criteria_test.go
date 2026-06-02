@@ -1,9 +1,11 @@
 package storeit
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -18,6 +20,35 @@ type testCriteriaStruct struct {
 	Offset   int    `criteria:"offset:offset"`
 	Limit    int    `criteria:"limit:limit"`
 	Keywords string `criteria:"title,content:like"`
+}
+
+func dryRunCriteriaSQL(t *testing.T, criteria *Criteria) string {
+	t.Helper()
+
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	assert.NoError(t, err)
+
+	tx := db.Session(&gorm.Session{DryRun: true}).Model(&TestModel{})
+	if criteria != nil {
+		if criteria.GetOffset() > 0 {
+			tx = tx.Offset(criteria.GetOffset())
+		}
+		if criteria.limit > 0 || criteria.GetOffset() > 0 {
+			tx = tx.Limit(criteria.limit)
+		}
+		if criteria.group != "" {
+			tx = tx.Group(criteria.group)
+		}
+		for _, item := range criteria.orders {
+			tx = tx.Order(item)
+		}
+		for _, closure := range criteria.scopeClosures {
+			tx = closure(tx)
+		}
+	}
+
+	tx = tx.Find(&[]TestModel{})
+	return tx.Statement.SQL.String()
 }
 
 func TestExtractCriteria(t *testing.T) {
@@ -69,7 +100,10 @@ func TestCriteria_WhereAndOr(t *testing.T) {
 	c := NewCriteria()
 	c.Where("name = ?", "foo")
 	c.OrWhere("age = ?", 18)
-	assert.Len(t, c.scopeClosures, 2)
+
+	sql := dryRunCriteriaSQL(t, c)
+	assert.Contains(t, sql, "name = ?")
+	assert.Contains(t, sql, "OR age = ?")
 }
 
 func TestCriteria_WhereGtGteLtLte(t *testing.T) {
@@ -78,7 +112,12 @@ func TestCriteria_WhereGtGteLtLte(t *testing.T) {
 	c.WhereGte("age", 11)
 	c.WhereLt("age", 20)
 	c.WhereLte("age", 21)
-	assert.Len(t, c.scopeClosures, 4)
+
+	sql := dryRunCriteriaSQL(t, c)
+	assert.Contains(t, sql, "age > ?")
+	assert.Contains(t, sql, "age >= ?")
+	assert.Contains(t, sql, "age < ?")
+	assert.Contains(t, sql, "age <= ?")
 }
 
 func TestCriteria_WhereNotAndNull(t *testing.T) {
@@ -86,14 +125,21 @@ func TestCriteria_WhereNotAndNull(t *testing.T) {
 	c.WhereNot("name", "foo")
 	c.WhereIsNull("email")
 	c.WhereNotNull("email")
-	assert.Len(t, c.scopeClosures, 3)
+
+	sql := dryRunCriteriaSQL(t, c)
+	assert.Contains(t, sql, "`name` <> ?")
+	assert.Contains(t, sql, "email IS NULL")
+	assert.Contains(t, sql, "email IS NOT NULL")
 }
 
 func TestCriteria_WhereInNotIn(t *testing.T) {
 	c := NewCriteria()
 	c.WhereIn("status", []string{"a", "b"})
 	c.WhereNotIn("status", []string{"c"})
-	assert.Len(t, c.scopeClosures, 2)
+
+	sql := dryRunCriteriaSQL(t, c)
+	assert.Contains(t, sql, "status IN")
+	assert.Contains(t, sql, "status NOT IN")
 }
 
 func TestCriteria_WhereStartEndContainsBetween(t *testing.T) {
@@ -102,7 +148,11 @@ func TestCriteria_WhereStartEndContainsBetween(t *testing.T) {
 	c.WhereEndWith("name", "Z")
 	c.WhereContains("desc", "foo")
 	c.WhereBetween("age", 1, 10)
-	assert.Len(t, c.scopeClosures, 4)
+
+	sql := dryRunCriteriaSQL(t, c)
+	assert.Contains(t, sql, "name LIKE ?")
+	assert.Contains(t, sql, "`desc` LIKE ?")
+	assert.Contains(t, sql, "age BETWEEN ? AND ?")
 }
 
 func TestCriteria_Order(t *testing.T) {
@@ -130,9 +180,11 @@ func TestCriteria_GroupHavingJoinsPreload(t *testing.T) {
 	c.Group("status")
 	c.Having("COUNT(*) > ?", 1)
 	c.Joins("LEFT JOIN t ON t.id = a.id")
-	c.AddPreload("User")
-	assert.Equal(t, "status", c.group)
-	assert.Len(t, c.scopeClosures, 3)
+
+	sql := dryRunCriteriaSQL(t, c)
+	assert.Contains(t, sql, "LEFT JOIN t ON t.id = a.id")
+	assert.Contains(t, sql, "GROUP BY `status`")
+	assert.Contains(t, sql, "HAVING COUNT(*) > ?")
 }
 
 func TestCriteria_GetPagePerPageOffsetLimit(t *testing.T) {
@@ -209,12 +261,14 @@ func TestCriteria_GroupOr(t *testing.T) {
 		{query: "age > ?", args: []any{18}},
 	}
 	c.GroupOr(group)
-	assert.Len(t, c.scopeClosures, 1)
+
+	sql := dryRunCriteriaSQL(t, c)
+	assert.Contains(t, sql, "name = ? OR age > ?")
 
 	// 空组
 	c2 := NewCriteria()
 	c2.GroupOr(groupConditionSpec{})
-	assert.Len(t, c2.scopeClosures, 0)
+	assert.NotContains(t, dryRunCriteriaSQL(t, c2), "name = ?")
 }
 
 func TestCriteria_ZeroValueFieldSkip(t *testing.T) {
@@ -226,7 +280,8 @@ func TestCriteria_ZeroValueFieldSkip(t *testing.T) {
 	c, err := ExtractCriteria(s)
 	assert.NoError(t, err)
 	assert.NotNil(t, c)
-	assert.Empty(t, c.scopeClosures)
+	assert.NotContains(t, dryRunCriteriaSQL(t, c), "name = ?")
+	assert.NotContains(t, dryRunCriteriaSQL(t, c), "age > ?")
 }
 
 func TestCriteria_TagError(t *testing.T) {
@@ -250,7 +305,7 @@ func TestCriteria_PerPageAffectsLimit(t *testing.T) {
 func TestCriteria_WhereBetween(t *testing.T) {
 	c := NewCriteria()
 	c.WhereBetween("age", 1, 10)
-	assert.Len(t, c.scopeClosures, 1)
+	assert.Contains(t, dryRunCriteriaSQL(t, c), "age BETWEEN ? AND ?")
 }
 
 func TestCriteria_OrderReservedWord(t *testing.T) {
@@ -336,4 +391,27 @@ func TestCriteria_ExtractCriteriaWithMultipleFields(t *testing.T) {
 	assert.NotNil(t, c)
 	// keyword 会在 title 和 content 两个字段上执行 like
 	assert.Len(t, c.scopeClosures, 1) // GroupOr creates one scope closure
+}
+
+func TestCriteria_ExtractCriteriaRejectsUnsafeSort(t *testing.T) {
+	type SearchReq struct {
+		Sort string `criteria:"sort:sort"`
+	}
+
+	_, err := ExtractCriteria(SearchReq{Sort: "name desc;drop table users"})
+	assert.Error(t, err)
+	if err != nil {
+		assert.True(t, strings.Contains(err.Error(), "sort"))
+	}
+}
+
+func TestCriteria_WhereBetweenQuotesReservedWord(t *testing.T) {
+	c := NewCriteria()
+	c.WhereBetween("order", 1, 10)
+
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	assert.NoError(t, err)
+
+	tx := c.scopeClosures[0](db.Session(&gorm.Session{DryRun: true}).Model(&TestModel{})).Find(&[]TestModel{})
+	assert.Contains(t, tx.Statement.SQL.String(), "`order` BETWEEN")
 }

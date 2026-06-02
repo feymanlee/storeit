@@ -85,6 +85,30 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
+func runConcurrent(numWorkers int, fn func(workerID int) error) []error {
+	var wg sync.WaitGroup
+	errCh := make(chan error, numWorkers)
+
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			if err := fn(workerID); err != nil {
+				errCh <- err
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	var errs []error
+	for err := range errCh {
+		errs = append(errs, err)
+	}
+	return errs
+}
+
 func TestGormStore_Basic(t *testing.T) {
 	db := setupTestDB(t)
 	store := New[TestModel](db)
@@ -231,14 +255,13 @@ func TestGormStore_SetTx(t *testing.T) {
 
 	// 测试设置事务
 	tx := db.Begin()
+	t.Cleanup(func() {
+		tx.Rollback()
+	})
 	txStore := store.SetTx(tx)
 	assert.NotNil(t, txStore)
 
-	// 测试重复设置事务
-	txStore2 := txStore.SetTx(tx)
-	assert.Equal(t, txStore, txStore2)
-
-	tx.Rollback()
+	assert.NotSame(t, store, txStore)
 }
 
 func TestGormStore_Transaction(t *testing.T) {
@@ -591,7 +614,21 @@ func TestGormStore_Reset(t *testing.T) {
 	assert.Empty(t, store.hidden)
 	assert.Empty(t, store.scopeClosures)
 	assert.False(t, store.unscoped)
-	assert.Nil(t, store.tx)
+}
+
+func TestGormStore_ResetPreservesTransaction(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+
+	tx := db.Begin()
+	t.Cleanup(func() {
+		tx.Rollback()
+	})
+
+	txStore := store.SetTx(tx)
+	txStore.reset()
+
+	assert.Same(t, tx, txStore.tx)
 }
 
 func TestGormStore_Present(t *testing.T) {
@@ -689,6 +726,26 @@ func TestGormStore_Transaction_Commit(t *testing.T) {
 	found, err := store.FindByID(ctx, model.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, model.Name, found.Name)
+}
+
+func TestGormStore_Transaction_ReusesTxStoreAcrossOperations(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	tx := db.Begin()
+	txStore := store.SetTx(tx)
+
+	err := txStore.Create(ctx, &TestModel{Name: "Tx One", Age: 30}).Error
+	assert.NoError(t, err)
+	err = txStore.Create(ctx, &TestModel{Name: "Tx Two", Age: 31}).Error
+	assert.NoError(t, err)
+
+	tx.Rollback()
+
+	count, err := store.Count(ctx, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), count)
 }
 
 func TestGormStore_ComplexQueries(t *testing.T) {
@@ -916,27 +973,20 @@ func TestGormStore_ConcurrentAccess(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	// 并发使用同一个 store 实例进行各种操作
-	var wg sync.WaitGroup
-	numGoroutines := 20
-
-	for i := 0; i < numGoroutines; i++ {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
-
-			// 执行各种操作，测试并发安全性
-			_, err := store.FindByID(ctx, int64(id+1))
-			assert.NoError(t, err)
-
-			_, err = store.Count(ctx, NewCriteria().Where("age > ?", 20))
-			assert.NoError(t, err)
-
-			_, err = store.Find(ctx, NewCriteria().Limit(5))
-			assert.NoError(t, err)
-		}(i % 10)
-	}
-	wg.Wait()
+	errs := runConcurrent(20, func(workerID int) error {
+		id := workerID%10 + 1
+		if _, err := store.FindByID(ctx, int64(id)); err != nil {
+			return fmt.Errorf("find by id: %w", err)
+		}
+		if _, err := store.Count(ctx, NewCriteria().Where("age > ?", 20)); err != nil {
+			return fmt.Errorf("count: %w", err)
+		}
+		if _, err := store.Find(ctx, NewCriteria().Limit(5)); err != nil {
+			return fmt.Errorf("find: %w", err)
+		}
+		return nil
+	})
+	assert.Empty(t, errs)
 }
 
 func TestGormStore_Paginate_Concurrent(t *testing.T) {
@@ -950,22 +1000,21 @@ func TestGormStore_Paginate_Concurrent(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	// 多次并发调用 Paginate
-	var wg sync.WaitGroup
-	numConcurrent := 10
-
-	for i := 0; i < numConcurrent; i++ {
-		wg.Add(1)
-		go func(page int) {
-			defer wg.Done()
-
-			pagination, err := store.Paginate(ctx, NewCriteria().Page(page).PerPage(10))
-			assert.NoError(t, err)
-			assert.NotNil(t, pagination)
-			assert.Equal(t, int64(100), pagination.Total)
-		}(i%5 + 1)
-	}
-	wg.Wait()
+	errs := runConcurrent(10, func(workerID int) error {
+		page := workerID%5 + 1
+		pagination, err := store.Paginate(ctx, NewCriteria().Page(page).PerPage(10))
+		if err != nil {
+			return fmt.Errorf("paginate page %d: %w", page, err)
+		}
+		if pagination == nil {
+			return fmt.Errorf("paginate page %d returned nil", page)
+		}
+		if pagination.Total != 100 {
+			return fmt.Errorf("paginate page %d total = %d", page, pagination.Total)
+		}
+		return nil
+	})
+	assert.Empty(t, errs)
 }
 
 func TestGormStore_ConcurrentColumnsAndHidden(t *testing.T) {
@@ -983,31 +1032,29 @@ func TestGormStore_ConcurrentColumnsAndHidden(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	// 并发使用 Columns 和 Hidden
-	var wg sync.WaitGroup
-	numGoroutines := 10
+	errs := runConcurrent(10, func(workerID int) error {
+		id := workerID%10 + 1
 
-	for i := 0; i < numGoroutines; i++ {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
+		colsStore := store.Columns([]string{"name", "age"})
+		found, err := colsStore.FindByID(ctx, int64(id))
+		if err != nil {
+			return fmt.Errorf("columns find by id: %w", err)
+		}
+		if found.Name == "" || found.Age == 0 {
+			return fmt.Errorf("columns find missing selected fields: %+v", found)
+		}
 
-			// 使用 Columns
-			colsStore := store.Columns([]string{"name", "age"})
-			found, err := colsStore.FindByID(ctx, int64(id+1))
-			assert.NoError(t, err)
-			assert.NotEmpty(t, found.Name)
-			assert.NotZero(t, found.Age)
-
-			// 使用 Hidden
-			hiddenStore := store.Hidden([]string{"email"})
-			found, err = hiddenStore.FindByID(ctx, int64(id+1))
-			assert.NoError(t, err)
-			assert.NotEmpty(t, found.Name)
-			assert.Empty(t, found.Email)
-		}(i % 10)
-	}
-	wg.Wait()
+		hiddenStore := store.Hidden([]string{"email"})
+		found, err = hiddenStore.FindByID(ctx, int64(id))
+		if err != nil {
+			return fmt.Errorf("hidden find by id: %w", err)
+		}
+		if found.Name == "" || found.Email != "" {
+			return fmt.Errorf("hidden find unexpected fields: %+v", found)
+		}
+		return nil
+	})
+	assert.Empty(t, errs)
 }
 
 func TestGormStore_ConcurrentMixedOperations(t *testing.T) {
@@ -1021,40 +1068,27 @@ func TestGormStore_ConcurrentMixedOperations(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	var wg sync.WaitGroup
-	numWorkers := 10
-
-	// 并发执行混合操作
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go func(workerID int) {
-			defer wg.Done()
-
-			switch workerID % 5 {
-			case 0:
-				// FindByID
-				_, err := store.FindByID(ctx, int64(workerID+1))
-				assert.NoError(t, err)
-			case 1:
-				// Count
-				_, err := store.Count(ctx, NewCriteria().Where("age > ?", 20))
-				assert.NoError(t, err)
-			case 2:
-				// Find with criteria
-				_, err := store.Find(ctx, NewCriteria().Limit(5).Order("id", true))
-				assert.NoError(t, err)
-			case 3:
-				// First
-				_, err := store.First(ctx, NewCriteria().Where("age > ?", 20))
-				assert.NoError(t, err)
-			case 4:
-				// Exists
-				_, err := store.Exists(ctx, NewCriteria().Where("age > ?", 20))
-				assert.NoError(t, err)
-			}
-		}(i)
-	}
-	wg.Wait()
+	errs := runConcurrent(10, func(workerID int) error {
+		switch workerID % 5 {
+		case 0:
+			_, err := store.FindByID(ctx, int64(workerID+1))
+			return err
+		case 1:
+			_, err := store.Count(ctx, NewCriteria().Where("age > ?", 20))
+			return err
+		case 2:
+			_, err := store.Find(ctx, NewCriteria().Limit(5).Order("id", true))
+			return err
+		case 3:
+			_, err := store.First(ctx, NewCriteria().Where("age > ?", 20))
+			return err
+		case 4:
+			_, err := store.Exists(ctx, NewCriteria().Where("age > ?", 20))
+			return err
+		}
+		return nil
+	})
+	assert.Empty(t, errs)
 }
 
 func TestGormStore_FindInBatches(t *testing.T) {
@@ -1155,6 +1189,72 @@ func TestGormStore_QueryInBatches(t *testing.T) {
 		return nil
 	}, nil)
 	assert.ErrorIs(t, err, testErr)
+}
+
+func TestGormStore_QueryInBatches_ValidatesArguments(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	var results []TestModel
+
+	err := store.QueryInBatches(ctx, nil, 10, func(tx *gorm.DB, batch int) error {
+		return nil
+	}, nil)
+	assert.ErrorIs(t, err, ErrNilModels)
+
+	err = store.QueryInBatches(ctx, &results, 0, func(tx *gorm.DB, batch int) error {
+		return nil
+	}, nil)
+	assert.ErrorIs(t, err, ErrInvalidBatch)
+
+	err = store.QueryInBatches(ctx, &results, 10, nil, nil)
+	assert.ErrorIs(t, err, ErrNilCallback)
+}
+
+func TestGormStore_QueryInBatches_UsesTransactionInCallback(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	err := store.Creates(ctx, []TestModel{
+		{Name: "User 1", Age: 20},
+		{Name: "User 2", Age: 21},
+	}).Error
+	assert.NoError(t, err)
+
+	gormTx := db.Begin()
+	txStore := store.SetTx(gormTx)
+	t.Cleanup(func() {
+		gormTx.Rollback()
+	})
+	var results []TestModel
+	callbackUsedTx := false
+	err = txStore.QueryInBatches(ctx, &results, 1, func(callbackTx *gorm.DB, batch int) error {
+		callbackUsedTx = callbackTx.Statement.ConnPool == gormTx.Statement.ConnPool
+		return nil
+	}, nil)
+	assert.NoError(t, err)
+	assert.True(t, callbackUsedTx)
+}
+
+func TestGormStore_PaginateAllowsNilCriteria(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	err := store.Creates(ctx, []TestModel{
+		{Name: "User 1", Age: 20},
+		{Name: "User 2", Age: 21},
+	}).Error
+	assert.NoError(t, err)
+
+	pagination, err := store.Paginate(ctx, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(2), pagination.Total)
+	assert.Equal(t, 1, pagination.Page)
+	assert.Equal(t, 50, pagination.PerPage)
+	assert.Len(t, pagination.Items, 2)
 }
 
 func TestGormStore_Update(t *testing.T) {

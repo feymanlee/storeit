@@ -3,7 +3,6 @@ module github.com/feymanlee/storeit
 go 1.18
 
 require (
-	github.com/jinzhu/copier v0.4.0
 	github.com/spf13/cast v1.8.0
 	github.com/stretchr/testify v1.9.0
 	golang.org/x/exp v0.0.0-20230321023759-10a507213a29

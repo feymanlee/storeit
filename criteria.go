@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/cast"
@@ -15,14 +16,14 @@ import (
 
 // Constants for criteria operators and special fields.
 const (
-	criteriaLike    = "like"    // LIKE "%value%" - contains pattern
-	criteriaLLike   = "llike"   // LIKE "%value" - ends with pattern
-	criteriaRLike   = "rlike"   // LIKE "value%" - starts with pattern
-	criteriaSort    = "sort"    // Sort/order by field
+	criteriaLike    = "like"     // LIKE "%value%" - contains pattern
+	criteriaLLike   = "llike"    // LIKE "%value" - ends with pattern
+	criteriaRLike   = "rlike"    // LIKE "value%" - starts with pattern
+	criteriaSort    = "sort"     // Sort/order by field
 	criteriaPerPage = "per_page" // Items per page for pagination
-	criteriaPage    = "page"    // Page number for pagination
-	criteriaOffset  = "offset"  // Offset for pagination
-	criteriaLimit   = "limit"   // Limit/maximum number of results
+	criteriaPage    = "page"     // Page number for pagination
+	criteriaOffset  = "offset"   // Offset for pagination
+	criteriaLimit   = "limit"    // Limit/maximum number of results
 )
 
 // conditionSpec represents a single WHERE condition with query string and arguments.
@@ -49,17 +50,19 @@ type Criteria struct {
 // conditionMapping maps operator names to SQL operators.
 // These are used in struct tag-based criteria extraction.
 var conditionMapping = map[string]string{
-	"eq":  "=",   // Equal
-	"neq": "<>",  // Not equal
-	"gt":  ">",   // Greater than
-	"gte": ">=",  // Greater than or equal
-	"lt":  "<",   // Less than
-	"lte": "<=",  // Less than or equal
-	"in":  "IN",  // In list
+	"eq":  "=",  // Equal
+	"neq": "<>", // Not equal
+	"gt":  ">",  // Greater than
+	"gte": ">=", // Greater than or equal
+	"lt":  "<",  // Less than
+	"lte": "<=", // Less than or equal
+	"in":  "IN", // In list
 }
 
 // valueStringOperator contains operators that work with string values for LIKE patterns.
 var valueStringOperator = []string{criteriaLike, criteriaLLike, criteriaRLike, criteriaSort}
+
+var safeIdentifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$`)
 
 // NewCriteria creates a new empty Criteria instance.
 //
@@ -161,11 +164,15 @@ func ExtractCriteria(source any) (*Criteria, error) {
 		case criteriaSort:
 			value, err := cast.ToStringE(fieldValue)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("parse sort field %s: %w", sf.Name, err)
 			}
 			orders := strings.Split(value, ",")
 			for _, order := range orders {
-				criteria.Order(strings.TrimSpace(strings.TrimRight(order, "+-")), strings.HasSuffix(order, "-"))
+				sortField := strings.TrimSpace(strings.TrimRight(order, "+-"))
+				if !isSafeIdentifier(sortField) {
+					return nil, fmt.Errorf("invalid sort field %q for %s", sortField, sf.Name)
+				}
+				criteria.Order(sortField, strings.HasSuffix(order, "-"))
 			}
 		}
 		fields := strings.Split(criteriaOptions[0], ",")
@@ -284,6 +291,7 @@ func buildLikeCondition(field, value, likeType string) (cond conditionSpec) {
 //	    {query: "name = ?", args: []any{"John"}},
 //	    {query: "name = ?", args: []any{"Jane"}},
 //	})
+//
 // Results in: (name = 'John' OR name = 'Jane')
 func (c *Criteria) GroupOr(group groupConditionSpec) *Criteria {
 	if len(group) == 0 {
@@ -365,6 +373,7 @@ func (c *Criteria) WhereContains(field string, value string) *Criteria {
 //
 //	criteria.WhereBetween("age", 18, 65)
 func (c *Criteria) WhereBetween(field string, start, end any) *Criteria {
+	field = QuoteReservedWord(field)
 	return c.Where(field+" BETWEEN ? AND ?", start, end)
 }
 
@@ -552,4 +561,11 @@ func (c *Criteria) unsetOrder() {
 func (c *Criteria) unsetLimit() {
 	c.limit = 0
 	c.offset = 0
+}
+
+func isSafeIdentifier(field string) bool {
+	if field == "" {
+		return false
+	}
+	return safeIdentifierPattern.MatchString(field)
 }

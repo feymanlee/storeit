@@ -1,7 +1,6 @@
 package storeit
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -186,9 +185,6 @@ func TestMySQLReservedWordsContent(t *testing.T) {
 	}
 
 	for _, word := range commonReservedWords {
-		if !IsMySQLReservedWord(word) {
-			fmt.Println(word)
-		}
 		assert.True(t, IsMySQLReservedWord(word), "常见保留字 %s 应该在保留字列表中", word)
 	}
 }

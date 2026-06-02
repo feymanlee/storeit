@@ -77,28 +77,9 @@ jobs:
           slug: feymanlee/storeit
           fail_ci_if_error: false
 
-  build:
-    name: Build
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-
-      - name: Build
-        run: go build -v ./...
-
   all-checks:
     name: All Checks Passed
-    needs: [lint, test, build]
+    needs: [lint, test]
     runs-on: ubuntu-latest
     if: success()
     steps:

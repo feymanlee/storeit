@@ -3,6 +3,7 @@ package storeit
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -902,4 +903,336 @@ func TestGormStore_UpdatesById(t *testing.T) {
 	assert.Equal(t, "Updated User", found.Name)         // 保持不变
 	assert.Equal(t, 45, found.Age)                      // 已更新
 	assert.Equal(t, "updated@example.com", found.Email) // 保持不变
+}
+
+func TestGormStore_ConcurrentAccess(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 准备数据
+	for i := 0; i < 50; i++ {
+		err := store.Create(ctx, &TestModel{Name: fmt.Sprintf("User %d", i), Age: 20 + i}).Error
+		assert.NoError(t, err)
+	}
+
+	// 并发使用同一个 store 实例进行各种操作
+	var wg sync.WaitGroup
+	numGoroutines := 20
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+
+			// 执行各种操作，测试并发安全性
+			_, err := store.FindByID(ctx, int64(id+1))
+			assert.NoError(t, err)
+
+			_, err = store.Count(ctx, NewCriteria().Where("age > ?", 20))
+			assert.NoError(t, err)
+
+			_, err = store.Find(ctx, NewCriteria().Limit(5))
+			assert.NoError(t, err)
+		}(i % 10)
+	}
+	wg.Wait()
+}
+
+func TestGormStore_Paginate_Concurrent(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 准备数据
+	for i := 0; i < 100; i++ {
+		err := store.Create(ctx, &TestModel{Name: fmt.Sprintf("User %d", i), Age: 20 + i%30}).Error
+		assert.NoError(t, err)
+	}
+
+	// 多次并发调用 Paginate
+	var wg sync.WaitGroup
+	numConcurrent := 10
+
+	for i := 0; i < numConcurrent; i++ {
+		wg.Add(1)
+		go func(page int) {
+			defer wg.Done()
+
+			pagination, err := store.Paginate(ctx, NewCriteria().Page(page).PerPage(10))
+			assert.NoError(t, err)
+			assert.NotNil(t, pagination)
+			assert.Equal(t, int64(100), pagination.Total)
+		}(i%5 + 1)
+	}
+	wg.Wait()
+}
+
+func TestGormStore_ConcurrentColumnsAndHidden(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 准备数据
+	for i := 0; i < 20; i++ {
+		err := store.Create(ctx, &TestModel{
+			Name:  fmt.Sprintf("User %d", i),
+			Age:   20 + i,
+			Email: fmt.Sprintf("user%d@example.com", i),
+		}).Error
+		assert.NoError(t, err)
+	}
+
+	// 并发使用 Columns 和 Hidden
+	var wg sync.WaitGroup
+	numGoroutines := 10
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+
+			// 使用 Columns
+			colsStore := store.Columns([]string{"name", "age"})
+			found, err := colsStore.FindByID(ctx, int64(id+1))
+			assert.NoError(t, err)
+			assert.NotEmpty(t, found.Name)
+			assert.NotZero(t, found.Age)
+
+			// 使用 Hidden
+			hiddenStore := store.Hidden([]string{"email"})
+			found, err = hiddenStore.FindByID(ctx, int64(id+1))
+			assert.NoError(t, err)
+			assert.NotEmpty(t, found.Name)
+			assert.Empty(t, found.Email)
+		}(i % 10)
+	}
+	wg.Wait()
+}
+
+func TestGormStore_ConcurrentMixedOperations(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 准备数据
+	for i := 0; i < 30; i++ {
+		err := store.Create(ctx, &TestModel{Name: fmt.Sprintf("User %d", i), Age: 20 + i}).Error
+		assert.NoError(t, err)
+	}
+
+	var wg sync.WaitGroup
+	numWorkers := 10
+
+	// 并发执行混合操作
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+
+			switch workerID % 5 {
+			case 0:
+				// FindByID
+				_, err := store.FindByID(ctx, int64(workerID+1))
+				assert.NoError(t, err)
+			case 1:
+				// Count
+				_, err := store.Count(ctx, NewCriteria().Where("age > ?", 20))
+				assert.NoError(t, err)
+			case 2:
+				// Find with criteria
+				_, err := store.Find(ctx, NewCriteria().Limit(5).Order("id", true))
+				assert.NoError(t, err)
+			case 3:
+				// First
+				_, err := store.First(ctx, NewCriteria().Where("age > ?", 20))
+				assert.NoError(t, err)
+			case 4:
+				// Exists
+				_, err := store.Exists(ctx, NewCriteria().Where("age > ?", 20))
+				assert.NoError(t, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+func TestGormStore_FindInBatches(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 准备测试数据
+	var models []TestModel
+	for i := 0; i < 25; i++ {
+		models = append(models, TestModel{
+			Name: fmt.Sprintf("User %d", i),
+			Age:  20 + i%10,
+		})
+	}
+	err := store.Creates(ctx, models).Error
+	assert.NoError(t, err)
+
+	// 测试 FindInBatches
+	var results []TestModel
+	var batchCount int
+	var totalCount int
+
+	err = store.FindInBatches(ctx, &results, 10, func(tx *gorm.DB, batch int) error {
+		batchCount++
+		totalCount += len(results)
+		assert.LessOrEqual(t, len(results), 10)
+		return nil
+	}, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, 3, batchCount) // 25 records, batch size 10 = 3 batches
+	assert.Equal(t, 25, totalCount)
+
+	// 测试带条件的 FindInBatches
+	batchCount = 0
+	totalCount = 0
+	err = store.FindInBatches(ctx, &results, 5, func(tx *gorm.DB, batch int) error {
+		batchCount++
+		totalCount += len(results)
+		return nil
+	}, NewCriteria().Where("age >= ?", 25))
+	assert.NoError(t, err)
+	// age >= 25 的记录有 5 条 (User 5, 15 的 age=25; User 6,16 的 age=26; User 7,17 的 age=27; ... 实际应该是 age 25-29)
+	// 实际上 age = 20 + i%10，所以 age 25-29 对应 i%10 = 5-9，即 i=5,6,7,8,9,15,16,17,18,19 = 10 条记录
+	assert.Equal(t, 2, batchCount)
+	assert.Equal(t, 10, totalCount)
+}
+
+func TestGormStore_QueryInBatches(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 准备测试数据
+	var models []TestModel
+	for i := 0; i < 15; i++ {
+		models = append(models, TestModel{
+			Name: fmt.Sprintf("User %d", i),
+			Age:  20 + i,
+		})
+	}
+	err := store.Creates(ctx, models).Error
+	assert.NoError(t, err)
+
+	// 测试 QueryInBatches
+	var results []TestModel
+	var batchCount int
+
+	err = store.QueryInBatches(ctx, &results, 5, func(tx *gorm.DB, batch int) error {
+		batchCount++
+		// 验证每批数据
+		assert.LessOrEqual(t, len(results), 5)
+		for _, r := range results {
+			assert.NotEmpty(t, r.Name)
+			assert.NotZero(t, r.Age)
+		}
+		return nil
+	}, NewCriteria().Where("age >= ?", 20))
+	assert.NoError(t, err)
+	assert.Equal(t, 3, batchCount) // 15 records, batch size 5 = 3 batches
+
+	// 测试带条件的 QueryInBatches
+	batchCount = 0
+	err = store.QueryInBatches(ctx, &results, 3, func(tx *gorm.DB, batch int) error {
+		batchCount++
+		return nil
+	}, NewCriteria().Where("age >= ?", 25).Where("age <= ?", 30))
+	assert.NoError(t, err)
+	// age 25-30 的记录有 6 条 (User 5-10)，batch size 3 = 2 batches
+	assert.Equal(t, 2, batchCount)
+
+	// 测试返回错误的情况
+	testErr := fmt.Errorf("test error")
+	err = store.QueryInBatches(ctx, &results, 5, func(tx *gorm.DB, batch int) error {
+		if batch == 2 {
+			return testErr
+		}
+		return nil
+	}, nil)
+	assert.ErrorIs(t, err, testErr)
+}
+
+func TestGormStore_Update(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 准备测试数据
+	models := []TestModel{
+		{Name: "User 1", Age: 20, Email: "user1@test.com"},
+		{Name: "User 2", Age: 25, Email: "user2@test.com"},
+		{Name: "User 3", Age: 30, Email: "user3@test.com"},
+	}
+	err := store.Creates(ctx, models).Error
+	assert.NoError(t, err)
+
+	// 测试 Update 方法（单列更新）
+	err = store.Update(ctx, "age", 35, NewCriteria().Where("age < ?", 30)).Error
+	assert.NoError(t, err)
+
+	// 验证更新结果 - age < 30 的记录 (User 1 和 User 2) 的 age 应该变为 35
+	found, err := store.First(ctx, NewCriteria().Where("name = ?", "User 1"))
+	assert.NoError(t, err)
+	assert.Equal(t, 35, found.Age)
+
+	found, err = store.First(ctx, NewCriteria().Where("name = ?", "User 2"))
+	assert.NoError(t, err)
+	assert.Equal(t, 35, found.Age)
+
+	// User 3 的 age 应该保持不变
+	found, err = store.First(ctx, NewCriteria().Where("name = ?", "User 3"))
+	assert.NoError(t, err)
+	assert.Equal(t, 30, found.Age)
+
+	// 测试更新 email 字段
+	err = store.Update(ctx, "email", "updated@example.com", NewCriteria().Where("name = ?", "User 1")).Error
+	assert.NoError(t, err)
+
+	found, err = store.First(ctx, NewCriteria().Where("name = ?", "User 1"))
+	assert.NoError(t, err)
+	assert.Equal(t, "updated@example.com", found.Email)
+}
+
+func TestGormStore_UpdateById(t *testing.T) {
+	db := setupTestDB(t)
+	store := New[TestModel](db)
+	ctx := context.Background()
+
+	// 准备测试数据
+	model := &TestModel{
+		Name:  "Test User",
+		Age:   25,
+		Email: "test@example.com",
+	}
+	err := store.Create(ctx, model).Error
+	assert.NoError(t, err)
+	assert.NotZero(t, model.ID)
+
+	// 测试 UpdateById
+	err = store.UpdateById(ctx, model.ID, "age", 30).Error
+	assert.NoError(t, err)
+
+	// 验证更新
+	found, err := store.FindByID(ctx, model.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, 30, found.Age)
+	assert.Equal(t, "Test User", found.Name) // 其他字段不变
+	assert.Equal(t, "test@example.com", found.Email)
+
+	// 测试更新 email
+	err = store.UpdateById(ctx, model.ID, "email", "updated@example.com").Error
+	assert.NoError(t, err)
+
+	found, err = store.FindByID(ctx, model.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, "updated@example.com", found.Email)
+
+	// 测试更新不存在的记录
+	err = store.UpdateById(ctx, 9999, "age", 40).Error
+	assert.NoError(t, err) // GORM 不会返回错误，只是影响行数为 0
 }

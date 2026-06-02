@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"gorm.io/gorm"
 )
 
 type testCriteriaStruct struct {
@@ -256,4 +257,83 @@ func TestCriteria_OrderReservedWord(t *testing.T) {
 	c := NewCriteria()
 	c.Order("order", false)
 	assert.Contains(t, c.orders[0], "`order`")
+}
+
+func TestCriteria_WhereNeq(t *testing.T) {
+	c := NewCriteria()
+	c.WhereNeq("status", "deleted")
+	assert.Len(t, c.scopeClosures, 1)
+}
+
+func TestCriteria_OrderDescAsc(t *testing.T) {
+	c := NewCriteria()
+	c.OrderDesc("created_at")
+	c.OrderAsc("name")
+	assert.Equal(t, []string{"created_at DESC", "name"}, c.orders)
+}
+
+func TestCriteria_ScopeClosure(t *testing.T) {
+	c := NewCriteria()
+	called := false
+	c.ScopeClosure(func(tx *gorm.DB) *gorm.DB {
+		called = true
+		return tx.Where("test = ?", 1)
+	})
+	assert.Len(t, c.scopeClosures, 1)
+	assert.False(t, called) // Scope 应该延迟执行
+}
+
+func TestCriteria_AddPreload(t *testing.T) {
+	c := NewCriteria()
+	c.AddPreload("Orders")
+	c.AddPreload("Profile", "active = ?", true)
+	assert.Len(t, c.scopeClosures, 2)
+}
+
+func TestCriteria_GroupHavingJoins(t *testing.T) {
+	c := NewCriteria()
+	c.Group("category_id")
+	c.Having("COUNT(*) > ?", 5)
+	c.Joins("LEFT JOIN categories ON categories.id = products.category_id")
+
+	assert.Equal(t, "category_id", c.group)
+	assert.Len(t, c.scopeClosures, 2) // Having and Joins
+}
+
+func TestCriteria_GetLimitWithOffset(t *testing.T) {
+	// 测试 offset 优先的情况
+	c := NewCriteria().Offset(10).Limit(5)
+	assert.Equal(t, 10, c.GetOffset())
+	assert.Equal(t, 5, c.GetLimit())
+
+	// 测试 page/per_page 计算 offset
+	c2 := NewCriteria().Page(3).PerPage(10)
+	assert.Equal(t, 20, c2.GetOffset()) // (3-1) * 10 = 20
+	assert.Equal(t, 10, c2.GetLimit())
+}
+
+func TestCriteria_ExtractCriteriaWithPointer(t *testing.T) {
+	type SearchReq struct {
+		Name string `criteria:"name:eq"`
+		Age  int    `criteria:"age:gt"`
+	}
+
+	req := &SearchReq{Name: "John", Age: 18}
+	c, err := ExtractCriteria(req)
+	assert.NoError(t, err)
+	assert.NotNil(t, c)
+	assert.Len(t, c.scopeClosures, 2)
+}
+
+func TestCriteria_ExtractCriteriaWithMultipleFields(t *testing.T) {
+	type SearchReq struct {
+		Keyword string `criteria:"title,content:like"`
+	}
+
+	req := SearchReq{Keyword: "test"}
+	c, err := ExtractCriteria(req)
+	assert.NoError(t, err)
+	assert.NotNil(t, c)
+	// keyword 会在 title 和 content 两个字段上执行 like
+	assert.Len(t, c.scopeClosures, 1) // GroupOr creates one scope closure
 }

@@ -1,3 +1,5 @@
+// Package storeit provides a generic repository pattern wrapper around GORM.
+// This file contains utilities for handling MySQL reserved words.
 package storeit
 
 import (
@@ -6,6 +8,11 @@ import (
 	"sync"
 )
 
+// mysqlReservedWords is a list of MySQL reserved keywords that need to be
+// escaped with backticks when used as identifiers (table names, column names, etc.).
+// Using these words unescaped in SQL queries can cause syntax errors.
+//
+// Source: MySQL 8.0 Reserved Words
 var mysqlReservedWords = []string{
 	"ADD", "ALL", "ALTER", "ANALYZE", "AND", "AS", "ASC", "ASENSITIVE",
 	"BEFORE", "BETWEEN", "BIGINT", "BLOB", "BOTH", "BY", "CALL", "CASCADE",
@@ -43,13 +50,15 @@ var mysqlReservedWords = []string{
 	"WRITE", "XOR", "YEAR_MONTH", "ZEROFILL", "RANK", "OFFSET",
 }
 
-// 使用 map 存储保留字，提高查找效率
+// Variables for lazy initialization of the reserved words map.
+// Using sync.Once ensures thread-safe, one-time initialization.
 var (
-	reservedWordsMap     map[string]bool
-	reservedWordsMapOnce sync.Once
+	reservedWordsMap     map[string]bool // Map for O(1) lookup of reserved words
+	reservedWordsMapOnce sync.Once       // Ensures map is initialized only once
 )
 
-// 初始化保留字 map
+// initReservedWordsMap initializes the reserved words map from the slice.
+// This is called lazily on first use via sync.Once.
 func initReservedWordsMap() {
 	reservedWordsMapOnce.Do(func() {
 		reservedWordsMap = make(map[string]bool, len(mysqlReservedWords))
@@ -59,25 +68,43 @@ func initReservedWordsMap() {
 	})
 }
 
-// IsMySQLReservedWord 检查一个词是否是 MySQL 保留字
+// IsMySQLReservedWord checks if a word is a MySQL reserved keyword.
+// The check is case-insensitive.
+//
+// Example:
+//
+//	if storeit.IsMySQLReservedWord("order") {
+//	    // Handle reserved word
+//	}
 func IsMySQLReservedWord(word string) bool {
 	initReservedWordsMap()
 	return reservedWordsMap[strings.ToUpper(word)]
 }
 
-// QuoteReservedWord 如果是保留字，则用反引号包裹
+// QuoteReservedWord escapes a word with backticks if it is a MySQL reserved word.
+// It also handles:
+//   - Empty strings (returned as-is)
+//   - Already quoted words (returned as-is)
+//   - Table-qualified column names (e.g., "users.order" becomes "users.`order`")
+//
+// Example:
+//
+//	QuoteReservedWord("name")        // Returns: "name"
+//	QuoteReservedWord("order")       // Returns: "`order`"
+//	QuoteReservedWord("users.order") // Returns: "users.`order`"
+//	QuoteReservedWord("`order`")     // Returns: "`order`" (already quoted)
 func QuoteReservedWord(word string) string {
-	// 处理空字符串
+	// Handle empty string
 	if word == "" {
 		return word
 	}
 
-	// 如果已经被引号包裹，则直接返回
+	// Return as-is if already wrapped in backticks
 	if strings.HasPrefix(word, "`") && strings.HasSuffix(word, "`") {
 		return word
 	}
 
-	// 处理表名.列名的情况
+	// Handle table.column syntax
 	if strings.Contains(word, ".") {
 		parts := strings.Split(word, ".")
 		for i, part := range parts {
@@ -88,7 +115,7 @@ func QuoteReservedWord(word string) string {
 		return strings.Join(parts, ".")
 	}
 
-	// 处理普通字段名
+	// Handle regular field names
 	if IsMySQLReservedWord(word) {
 		return fmt.Sprintf("`%s`", word)
 	}

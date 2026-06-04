@@ -7,6 +7,7 @@ on:
       - '.golangci.yml'
       - '**.go'
       - '.github/workflows/**.yml'
+      - '.github/dependabot.yml'
   push:
     branches: [main, master]
     paths:
@@ -15,9 +16,7 @@ on:
       - '.golangci.yml'
       - '**.go'
       - '.github/workflows/**.yml'
-
-env:
-  GO_VERSION: '1.23'
+      - '.github/dependabot.yml'
 
 jobs:
   lint:
@@ -30,7 +29,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version: '1.23.x'
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v4
         with:
@@ -44,6 +43,12 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        go-version: ['1.18.x', stable]
+        exclude:
+          - os: macos-latest
+            go-version: '1.18.x'
+          - os: windows-latest
+            go-version: '1.18.x'
 
     steps:
       - name: Checkout code
@@ -52,7 +57,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version: ${{ matrix.go-version }}
 
       - name: Download dependencies
         run: go mod download
@@ -77,9 +82,24 @@ jobs:
           slug: feymanlee/storeit
           fail_ci_if_error: false
 
+  vulnerability:
+    name: Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Run govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
   all-checks:
     name: All Checks Passed
-    needs: [lint, test]
+    needs: [lint, test, vulnerability]
     runs-on: ubuntu-latest
     if: success()
     steps:

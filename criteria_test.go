@@ -236,10 +236,44 @@ func TestCriteria_buildConditionSpec(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, []any{"bar%"}, cond.args)
 
+	// notin
+	cond, err = c.buildConditionSpec("notin", "status", []string{"deleted"})
+	assert.NoError(t, err)
+	assert.Equal(t, "status NOT IN ?", cond.query)
+	assert.Equal(t, []any{[]string{"deleted"}}, cond.args)
+
+	// isnull
+	cond, err = c.buildConditionSpec("isnull", "deleted_at", true)
+	assert.NoError(t, err)
+	assert.Equal(t, "deleted_at IS NULL", cond.query)
+	assert.Empty(t, cond.args)
+
+	// notnull
+	cond, err = c.buildConditionSpec("notnull", "email", true)
+	assert.NoError(t, err)
+	assert.Equal(t, "email IS NOT NULL", cond.query)
+	assert.Empty(t, cond.args)
+
+	// between
+	cond, err = c.buildConditionSpec("between", "age", []int{18, 65})
+	assert.NoError(t, err)
+	assert.Equal(t, "age BETWEEN ? AND ?", cond.query)
+	assert.Equal(t, []any{18, 65}, cond.args)
+
 	// unknown
 	cond, err = c.buildConditionSpec("unknown", "foo", "bar")
 	assert.NoError(t, err)
 	assert.Empty(t, cond.query)
+}
+
+func TestCriteria_buildConditionSpecRejectsInvalidBetween(t *testing.T) {
+	c := NewCriteria()
+
+	_, err := c.buildConditionSpec("between", "age", 18)
+	assert.Error(t, err)
+
+	_, err = c.buildConditionSpec("between", "age", []int{18})
+	assert.Error(t, err)
 }
 
 func TestBuildLikeCondition(t *testing.T) {
@@ -395,7 +429,7 @@ func TestCriteria_ExtractCriteriaWithMultipleFields(t *testing.T) {
 
 func TestCriteria_ExtractCriteriaRejectsUnsafeSort(t *testing.T) {
 	type SearchReq struct {
-		Sort string `criteria:"sort:sort"`
+		Sort string `criteria:"-:sort"`
 	}
 
 	_, err := ExtractCriteria(SearchReq{Sort: "name desc;drop table users"})
@@ -403,6 +437,51 @@ func TestCriteria_ExtractCriteriaRejectsUnsafeSort(t *testing.T) {
 	if err != nil {
 		assert.True(t, strings.Contains(err.Error(), "sort"))
 	}
+}
+
+func TestCriteria_ExtractCriteriaMetaTagsDoNotAddWhereClauses(t *testing.T) {
+	type SearchReq struct {
+		Page    int    `criteria:"-:page"`
+		PerPage int    `criteria:"-:per_page"`
+		Sort    string `criteria:"-:sort"`
+	}
+
+	c, err := ExtractCriteria(SearchReq{
+		Page:    2,
+		PerPage: 10,
+		Sort:    "id-",
+	})
+	assert.NoError(t, err)
+
+	sql := dryRunCriteriaSQL(t, c)
+	assert.Contains(t, sql, "ORDER BY id DESC")
+	assert.Contains(t, sql, "LIMIT 10")
+	assert.NotContains(t, sql, "`-`")
+	assert.NotContains(t, sql, "- like ?")
+	assert.NotContains(t, sql, "- = ?")
+}
+
+func TestCriteria_ExtractCriteriaSupportsDocumentedTags(t *testing.T) {
+	type SearchReq struct {
+		Statuses  []string `criteria:"status:notin"`
+		DeletedAt bool     `criteria:"deleted_at:isnull"`
+		Email     bool     `criteria:"email:notnull"`
+		Ages      []int    `criteria:"age:between"`
+	}
+
+	c, err := ExtractCriteria(SearchReq{
+		Statuses:  []string{"deleted", "blocked"},
+		DeletedAt: true,
+		Email:     true,
+		Ages:      []int{18, 65},
+	})
+	assert.NoError(t, err)
+
+	sql := dryRunCriteriaSQL(t, c)
+	assert.Contains(t, sql, "status NOT IN")
+	assert.Contains(t, sql, "deleted_at IS NULL")
+	assert.Contains(t, sql, "email IS NOT NULL")
+	assert.Contains(t, sql, "age BETWEEN ? AND ?")
 }
 
 func TestCriteria_WhereBetweenQuotesReservedWord(t *testing.T) {

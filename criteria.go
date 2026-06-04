@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cast"
-	"golang.org/x/exp/slices"
 	"gorm.io/gorm"
 )
 
@@ -24,6 +23,10 @@ const (
 	criteriaPage    = "page"     // Page number for pagination
 	criteriaOffset  = "offset"   // Offset for pagination
 	criteriaLimit   = "limit"    // Limit/maximum number of results
+	criteriaNotIn   = "notin"    // NOT IN list
+	criteriaIsNull  = "isnull"   // IS NULL check
+	criteriaNotNull = "notnull"  // IS NOT NULL check
+	criteriaBetween = "between"  // BETWEEN range
 )
 
 // conditionSpec represents a single WHERE condition with query string and arguments.
@@ -58,9 +61,6 @@ var conditionMapping = map[string]string{
 	"lte": "<=", // Less than or equal
 	"in":  "IN", // In list
 }
-
-// valueStringOperator contains operators that work with string values for LIKE patterns.
-var valueStringOperator = []string{criteriaLike, criteriaLLike, criteriaRLike, criteriaSort}
 
 var safeIdentifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$`)
 
@@ -143,24 +143,28 @@ func ExtractCriteria(source any) (*Criteria, error) {
 				return nil, err
 			}
 			criteria.PerPage(value)
+			continue
 		case criteriaPage:
 			value, err := cast.ToIntE(fieldValue)
 			if err != nil {
 				return nil, err
 			}
 			criteria.Page(value)
+			continue
 		case criteriaOffset:
 			value, err := cast.ToIntE(fieldValue)
 			if err != nil {
 				return nil, err
 			}
 			criteria.Offset(value)
+			continue
 		case criteriaLimit:
 			value, err := cast.ToIntE(fieldValue)
 			if err != nil {
 				return nil, err
 			}
 			criteria.Limit(value)
+			continue
 		case criteriaSort:
 			value, err := cast.ToStringE(fieldValue)
 			if err != nil {
@@ -174,6 +178,7 @@ func ExtractCriteria(source any) (*Criteria, error) {
 				}
 				criteria.Order(sortField, strings.HasSuffix(order, "-"))
 			}
+			continue
 		}
 		fields := strings.Split(criteriaOptions[0], ",")
 		if len(fields) > 1 {
@@ -253,13 +258,34 @@ func (c *Criteria) buildConditionSpec(criteriaOperator string, field string, fie
 	if operator, ok := conditionMapping[criteriaOperator]; ok {
 		cond.query = fmt.Sprintf("%s %s ?", field, operator)
 		cond.args = []any{fieldValue}
-	} else if slices.Contains(valueStringOperator, criteriaOperator) {
+		return
+	}
+
+	switch criteriaOperator {
+	case criteriaLike, criteriaLLike, criteriaRLike:
 		var value string
 		value, err = cast.ToStringE(fieldValue)
 		if err != nil {
 			return
 		}
 		cond = buildLikeCondition(field, value, criteriaOperator)
+	case criteriaNotIn:
+		cond.query = fmt.Sprintf("%s NOT IN ?", field)
+		cond.args = []any{fieldValue}
+	case criteriaIsNull:
+		cond.query = fmt.Sprintf("%s IS NULL", field)
+	case criteriaNotNull:
+		cond.query = fmt.Sprintf("%s IS NOT NULL", field)
+	case criteriaBetween:
+		values := reflect.ValueOf(fieldValue)
+		if values.Kind() != reflect.Array && values.Kind() != reflect.Slice {
+			return cond, fmt.Errorf("between field %s must be an array or slice", field)
+		}
+		if values.Len() != 2 {
+			return cond, fmt.Errorf("between field %s must contain exactly 2 values", field)
+		}
+		cond.query = fmt.Sprintf("%s BETWEEN ? AND ?", field)
+		cond.args = []any{values.Index(0).Interface(), values.Index(1).Interface()}
 	}
 	return
 }

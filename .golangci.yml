@@ -1,5 +1,4 @@
 linters:
-  default: standard
   enable:
     - cyclop
     - gocritic
@@ -20,11 +19,5 @@ linters-settings:
     # should ignore tests (default false)
     skip-tests: true
 
-formatters:
-  enable:
-    - gofumpt
-    - goimports
-
 output:
   print-issued-lines: true
-  print-config: true

@@ -1,148 +1,117 @@
 # storeit
 
-![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/feymanlee/storeit?style=flat-square)
-[![Go Report Card](https://goreportcard.com/badge/github.com/feymanlee/storeit)](https://goreportcard.com/report/github.com/feymanlee/cacheit)
-[![Unit-Tests](https://github.com/feymanlee/storeit/workflows/Unit-Tests/badge.svg)](https://github.com/feymanlee/storeit/actions)
-[![codecov](https://codecov.io/gh/feymanlee/storeit/graph/badge.svg?token=S8M4CFG0NB)](https://codecov.io/gh/feymanlee/storeit)
-[![Go Reference](https://pkg.go.dev/badge/github.com/feymanlee/storeit.svg)](https://pkg.go.dev/github.com/feymanlee/cacheit)
+[![Go Reference](https://pkg.go.dev/badge/github.com/feymanlee/storeit.svg)](https://pkg.go.dev/github.com/feymanlee/storeit)
+[![CI](https://github.com/feymanlee/storeit/actions/workflows/go.yml/badge.svg)](https://github.com/feymanlee/storeit/actions/workflows/go.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/feymanlee/storeit)](https://goreportcard.com/report/github.com/feymanlee/storeit)
+[![codecov](https://codecov.io/gh/feymanlee/storeit/graph/badge.svg)](https://codecov.io/gh/feymanlee/storeit)
 [![License](https://img.shields.io/github/license/feymanlee/storeit)](./LICENSE)
 
-## Tag List
-| Tag           | Value Type     | SQL Statment                        | DESC                   |
-|---------------|----------------|-------------------------------------|------------------------|
-| field:eq      | any            | feild = value                       |                        |
-| field:neq     | any            | feild <> value                      |                        |
-| field:gt      | any            | feild > value                       |                        |
-| field:gte     | any            | feild >= value                      |                        |
-| field:lt      | any            | feild < value                       |                        |
-| field:lte     | any            | feild <= value                      |                        |
-| field:like    | string         | feild LIKE "%value%"                |                        |
-| field:llike   | string         | feild LIKE "%value"                 |                        |
-| field:rlike   | string         | feild LIKE "value%"                 |                        |
-| field:in      | []any          | feild IN (value)                    |                        |
-| field:notin   | []any          | feild IN (value)                    |                        |
-| field:isnull  | any            | feild IS NULL                       |                        |
-| field:notnull | []any          | feild IS NOT NULL                   |                        |
-| field:between | []any (len==2) | feild BETWEEN value[0] AND value[1] |                        |
-| -:sort        | string         | ORDER BY a DESC, b, c DESC          | value is a-,b+,c-      |
-| -:page        | int            | OFFSET (value-1)*per_page           | Default per_page is 50 |
-| -:per_page    | int            | LIMIT value                         | Default  50            |
-| -:limit       | int            | LIMIT value                         |                        |
-| -:offset      | int            | OFFSET value                        |                        |
+`storeit` is a small generic repository helper for GORM. It wraps common CRUD,
+pagination, aggregation, preload, and criteria-based query operations while
+leaving the underlying `*gorm.DB` available for error handling and inspection.
 
-## 在 gin 里面使用
-```go
-package main
+## Installation
 
-import (
-	"context"
-	"database/sql"
-	"log"
-	"net/http"
-	"strconv"
-	"strings"
-	"time"
-
-	"github.com/brianvoe/gofakeit/v6"
-	"github.com/feymanlee/storeit"
-	"github.com/gin-gonic/gin"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
-)
-
-type User struct {
-	ID        int64        `gorm:"column:id;primarykey" json:"id"`
-	Username  string       `gorm:"column:username" json:"username"`
-	Email     string       `gorm:"column:email" json:"email"`
-	Mobile    string       `gorm:"column:mobile" json:"mobile"`
-	Status    string       `gorm:"column:status" json:"status"`
-	Weight    int          `gorm:"column:weight" json:"weight"`
-	Source    string       `gorm:"column:source" json:"source"`
-	CreatedAt time.Time    `gorm:"column:created_at" json:"created_at"`
-	UpdatedAt time.Time    `gorm:"column:updated_at" json:"updated_at"`
-	DeletedAt sql.NullTime `gorm:"column:email;index"`
-}
-
-var db *gorm.DB
-
-func init() {
-	var err error
-	db, err = gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
-	})
-	if err != nil {
-		panic(err)
-	}
-}
-
-func main() {
-	router := gin.Default()
-	v1 := router.Group("/api/v1")
-	{
-		v1.GET("/users", SearchUser)
-		v1.POST("/users", CreateUser)
-		v1.GET("/user/:id", FindUser)
-		v1.PUT("/users/:id", UpdateUser)
-		v1.DELETE("/users/:id", DeleteUser)
-	}
-	router.Run(":8180")
-}
-func SearchUser(c *gin.Context) {
-	var req struct {
-		ID      int    `form:"id" criteria:"id,eq"`
-		Keyword string `form:"keyword" criteria:"phone,email:like"`
-		Name    string `form:"name" criteria:"name:llike"`
-		Phone   int    `form:"phone" criteria:"phone:eq"`
-		Status  string `form:"status" criteria:"status:eq"`
-		Weight  int    `form:"weight" criteria:"weight:eq"`
-		Source  string `form:"source"`
-		Page    int    `form:"page" criteria:"-:page"`
-		PerPage int    `form:"per_page" criteria:"-:per_page"`
-		Sorts   string `form:"sorts" criteria:"-:sort"`
-	}
-	if err := c.ShouldBindQuery(&req); err != nil {
-		log.Println(err)
-	}
-	criteria, _ := storeit.ExtractCriteria(req)
-	// source 是多个值，使用英文逗号分隔
-	criteria.WhereIn("source", strings.Split(req.Source, ","))
-	// 实现自动分页
-	ret, _ := storeit.New[User](db).Paginate(c, criteria)
-
-	c.JSON(http.StatusOK, ret)
-}
-
-func FindUser(c *gin.Context) {
-	user, _ := storeit.New[User](db).FindByID(c, c.Params.ByName("id"))
-
-	c.JSON(200, user)
-}
-
-func CreateUser(c *gin.Context) {
-	var user User
-	_ = c.ShouldBindJSON(&user)
-	storeit.New[User](db).Insert(c, &user)
-	c.JSON(200, user)
-}
-
-func UpdateUser(c *gin.Context) {
-	var user User
-	_ = c.ShouldBindJSON(&user)
-	id, _ := strconv.Atoi(c.Params.ByName("id"))
-	user.ID = int64(id)
-	storeit.New[User](db).Save(c, &user)
-	c.JSON(200, user)
-}
-
-func DeleteUser(c *gin.Context) {
-	tx := storeit.New[User](db).DeleteById(c, c.Params.ByName("id"))
-	if tx.Error != nil {
-		c.AbortWithStatus(http.StatusBadRequest)
-	}
-	c.JSON(200, gin.H{
-		"id": c.Params.ByName("id"),
-	})
-}
+```bash
+go get github.com/feymanlee/storeit
 ```
 
+The module currently declares Go 1.18+ support.
+
+## Quick Start
+
+```go
+type User struct {
+	ID     int64  `gorm:"primaryKey"`
+	Name   string `gorm:"column:name"`
+	Status string `gorm:"column:status"`
+}
+
+store := storeit.New[User](db)
+
+user := User{Name: "Ada", Status: "active"}
+if err := store.Create(ctx, &user).Error; err != nil {
+	return err
+}
+
+criteria := storeit.NewCriteria().
+	Where("status = ?", "active").
+	OrderDesc("id").
+	Page(1).
+	PerPage(20)
+
+page, err := store.Paginate(ctx, criteria)
+if err != nil {
+	return err
+}
+fmt.Println(page.Total, len(page.Items))
+```
+
+## Criteria Tags
+
+`ExtractCriteria` builds a `Criteria` from struct tags, which is useful for HTTP
+query request structs.
+
+```go
+type SearchUsers struct {
+	Keyword string `form:"keyword" criteria:"name,email:like"`
+	Status  string `form:"status" criteria:"status:eq"`
+	Page    int    `form:"page" criteria:"-:page"`
+	PerPage int    `form:"per_page" criteria:"-:per_page"`
+	Sort    string `form:"sort" criteria:"-:sort"`
+}
+
+criteria, err := storeit.ExtractCriteria(req)
+```
+
+Supported tags:
+
+| Tag             | Value type      | SQL behavior                         |
+|-----------------|-----------------|--------------------------------------|
+| `field:eq`      | any             | `field = ?`                          |
+| `field:neq`     | any             | `field <> ?`                         |
+| `field:gt`      | any             | `field > ?`                          |
+| `field:gte`     | any             | `field >= ?`                         |
+| `field:lt`      | any             | `field < ?`                          |
+| `field:lte`     | any             | `field <= ?`                         |
+| `field:like`    | string          | `field LIKE "%value%"`               |
+| `field:llike`   | string          | `field LIKE "%value"`                |
+| `field:rlike`   | string          | `field LIKE "value%"`                |
+| `field:in`      | slice           | `field IN (?)`                       |
+| `field:notin`   | slice           | `field NOT IN (?)`                   |
+| `field:isnull`  | any             | `field IS NULL`                      |
+| `field:notnull` | any             | `field IS NOT NULL`                  |
+| `field:between` | slice, length 2 | `field BETWEEN ? AND ?`              |
+| `-:sort`        | string          | `ORDER BY`, for example `id-,name+`  |
+| `-:page`        | int             | page number, defaults to 1           |
+| `-:per_page`    | int             | page size, defaults to 50 in paginate |
+| `-:limit`       | int             | `LIMIT ?`                            |
+| `-:offset`      | int             | `OFFSET ?`                           |
+
+Sort fields are validated as simple identifiers such as `id`, `created_at`, or
+`users.created_at` before they are added to `ORDER BY`.
+
+## Examples
+
+See [`_examples/gin.go`](./_examples/gin.go) for a Gin and SQLite integration
+example. Runnable documentation examples are also available on
+[pkg.go.dev](https://pkg.go.dev/github.com/feymanlee/storeit).
+
+## Development
+
+```bash
+go mod download
+go mod verify
+go test ./...
+go test -race ./...
+go test -coverprofile=coverage.txt ./...
+golangci-lint run --timeout=10m
+```
+
+Run `gofumpt -w .` and `goimports -w .` before sending a pull request when
+those tools are available locally.
+
+## Contributing
+
+Issues and pull requests are welcome. Please read
+[`CONTRIBUTING.md`](./CONTRIBUTING.md) before proposing changes.

@@ -4,7 +4,7 @@ go 1.18
 
 require (
 	github.com/spf13/cast v1.8.0
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.11.1
 	golang.org/x/sync v0.9.0
 	gorm.io/driver/sqlite v1.5.0
 	gorm.io/gorm v1.30.0
